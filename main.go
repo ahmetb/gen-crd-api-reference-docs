@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"html/template"
@@ -10,6 +11,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	texttemplate "text/template"
+	"time"
+	"unicode"
 
 	"github.com/pkg/errors"
 	"k8s.io/gengo/parser"
@@ -20,8 +24,13 @@ import (
 var (
 	flOutDir    = flag.String("out", "out", "output directory")
 	flAPIDir    = flag.String("api-dir", "", "api directory (or import path), point this to pkg/apis")
-	flAPIPrefix = flag.String("api-prefix", `github.com/knative/serving/`, "match APIs with this package prefix")
+	flAPIPrefix = flag.String("api-prefix", `github.com/knative/serving/pkg/apis/`, "match APIs with this package prefix")
 )
+
+type externalPackage struct {
+	TypeMatchPrefix string `json:"typeMatchPrefix"`
+	DocsURLTemplate string `json:"docsURLTemplate"`
+}
 
 type generatorConfig struct {
 	PackagePrefix      string   `json:"packagePrefix"`
@@ -31,10 +40,7 @@ type generatorConfig struct {
 	// APIGroups maps package import paths to Kubernetes API Groups.
 	APIGroups map[string]string `json:"apiGroups"`
 
-	ExternalPackages struct {
-		MatchPrefix     string `json:"matchPrefix"`
-		DocsURLTemplate string `json:"docsURLTemplate"`
-	} `json:"externalPackages"`
+	ExternalPackages []externalPackage `json:"externalPackages"`
 }
 
 func init() {
@@ -57,7 +63,7 @@ func main() {
 	defer klog.Flush()
 
 	config := generatorConfig{
-		PackagePrefix: "github.com/knative/serving/pkg/apis/",
+		PackagePrefix: *flAPIPrefix,
 		HiddenMemberFields: []string{
 			"TypeMeta", // apiVersion and Kind shown separately.
 		},
@@ -69,6 +75,22 @@ func main() {
 			"github.com/knative/serving/pkg/apis/serving/v1alpha1":     "serving.knative.dev/v1alpha1",
 			"github.com/knative/serving/pkg/apis/networking/v1alpha1":  "networking.internal.knative.dev/v1alpha1",
 			"github.com/knative/serving/pkg/apis/autoscaling/v1alpha1": "autoscaling.knative.dev/v1alpha1",
+			"github.com/knative/build/pkg/apis/build/v1alpha1":         "build.knative.dev/v1alpha1",
+		},
+		ExternalPackages: []externalPackage{
+			{
+				// this type doesn't exist in k8s API docs, link to godoc instead
+				TypeMatchPrefix: `^k8s\.io/apimachinery/pkg/apis/meta/v1\.Duration$`,
+				DocsURLTemplate: "https://godoc.org/k8s.io/apimachinery/pkg/apis/meta/v1#Duration",
+			},
+			{
+				TypeMatchPrefix: `^k8s\.io/(api|apimachinery/pkg/apis)/`,
+				DocsURLTemplate: "https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.13/#{{lower .TypeIdentifier}}-{{arrIndex .PackageSegments -1}}-{{arrIndex .PackageSegments -2}}",
+			},
+			{
+				TypeMatchPrefix: `^github\.com/knative/pkg/apis/duck/`,
+				DocsURLTemplate: "https://godoc.org/github.com/knative/pkg/apis/duck/{{arrIndex .PackageSegments -1}}#{{.TypeIdentifier}}",
+			},
 		},
 	}
 
@@ -87,6 +109,8 @@ func main() {
 	}
 
 	h := func(w http.ResponseWriter, r *http.Request) {
+		now := time.Now()
+		defer func() { klog.Infof("request took %v", time.Since(now)) }()
 		err := render(w, pkgs, config)
 		if err != nil {
 			fmt.Fprintf(w, "%+v", err)
@@ -169,7 +193,7 @@ func isLocalType(t *types.Type, c generatorConfig) bool {
 
 func showComment(s []string) string { return strings.Join(s, "\n") }
 func nl2br(s string) string {
-	return strings.Replace(s, "\n\n", string(template.HTML("<br/></br/>")), -1)
+	return strings.Replace(s, "\n", string(template.HTML("</br/>")), -1)
 }
 func safe(s string) template.HTML { return template.HTML(s) }
 
@@ -182,18 +206,78 @@ func hiddenMember(m types.Member, c generatorConfig) bool {
 	return false
 }
 
-func localTypeIdentifier(t *types.Type) string {
+func typeIdentifier(t *types.Type, c generatorConfig) string {
 	tt := t
 	if t.Elem != nil {
 		tt = t.Elem
 	}
-	return tt.Name.Name
+	if !isLocalType(t, c) {
+		return tt.Name.String() // {PackagePath.Name}
+	}
+	return tt.Name.Name // just {Name}
 }
 
-func localTypeDisplayName(t *types.Type) string {
-	s := localTypeIdentifier(t)
+// linkForType returns an anchor to the type if it can be generated. returns
+// empty string if it is not a local type or unrecognized external type.
+func linkForType(t *types.Type, c generatorConfig) (string, error) {
+	if isLocalType(t, c) {
+		return "#" + typeIdentifier(t, c), nil
+	}
+
+	var arrIndex = func(a []string, i int) string {
+		return a[(len(a)+i)%len(a)]
+	}
+
+	for t.Elem != nil { // dereference kind=Pointer
+		t = t.Elem
+	}
+
+	// types like k8s.io/apimachinery/pkg/apis/meta/v1.ObjectMeta,
+	// k8s.io/api/core/v1.Container, k8s.io/api/autoscaling/v1.CrossVersionObjectReference,
+	// github.com/knative/build/pkg/apis/build/v1alpha1.BuildSpec
+	if t.Kind == types.Struct || t.Kind == types.Pointer || t.Kind == types.Interface || t.Kind == types.Alias {
+		id := typeIdentifier(t, c)                     // gives {{ImportPath.Identifier}} for type
+		segments := strings.Split(t.Name.Package, "/") // to parse [meta, v1] from "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+		for _, v := range c.ExternalPackages {
+			r, err := regexp.Compile(v.TypeMatchPrefix)
+			if err != nil {
+				return "", errors.Wrapf(err, "pattern %q failed to compile", v.TypeMatchPrefix)
+			}
+			if r.MatchString(id) {
+				tpl, err := texttemplate.New("").Funcs(map[string]interface{}{
+					"lower":    strings.ToLower,
+					"arrIndex": arrIndex,
+				}).Parse(v.DocsURLTemplate)
+				if err != nil {
+					return "", errors.Wrap(err, "docs URL template failed to parse")
+				}
+
+				var b bytes.Buffer
+				if err := tpl.
+					Execute(&b, map[string]interface{}{
+						"TypeIdentifier":  t.Name.Name,
+						"PackagePath":     t.Name.Package,
+						"PackageSegments": segments,
+					}); err != nil {
+					return "", errors.Wrap(err, "docs url template execution error")
+				}
+				return b.String(), nil
+			}
+		}
+		klog.Warningf("not found external link source for type %v", t.Name)
+	}
+	return "", nil
+}
+
+func typeDisplayName(t *types.Type, c generatorConfig) string {
+	s := typeIdentifier(t, c)
 	switch t.Kind {
-	case types.Struct, types.Pointer, types.Alias: // noop
+	case types.Struct, types.Interface, types.Alias, types.Builtin: // noop
+	case types.Map:
+		return t.Name.Name
+	case types.Pointer:
+		s = strings.TrimLeft(s, "*")
 	case types.Slice:
 		s = "[]" + s
 	default:
@@ -207,6 +291,10 @@ func hideType(t *types.Type, c generatorConfig) bool {
 		if regexp.MustCompile(pattern).MatchString(t.Name.String()) {
 			return true
 		}
+	}
+	if !isExportedType(t) && unicode.IsLower(rune(t.Name.Name[0])) {
+		// types that start with lowercase
+		return true
 	}
 	return false
 }
@@ -255,21 +343,28 @@ func render(w io.Writer, pkgs []*types.Package, config generatorConfig) error {
 	references := findTypeReferences(pkgs)
 
 	t, err := template.New("").Funcs(map[string]interface{}{
-		"isExportedType":       isExportedType,
-		"fieldName":            fieldName,
-		"fieldEmbedded":        fieldEmbedded,
-		"localTypeIdentifier":  localTypeIdentifier,
-		"localTypeDisplayName": localTypeDisplayName,
-		"visibleTypes":         func(t []*types.Type) []*types.Type { return visibleTypes(t, config) },
-		"trimPackagePrefix":    func(s string) string { return trimPackagePrefix(s, config) },
-		"showComment":          showComment,
-		"nl2br":                nl2br,
-		"apiGroup":             func(t *types.Type) string { return apiGroup(t, config) },
-		"safe":                 safe,
-		"sortedTypes":          sortedTypes,
-		"typeReferences":       func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
-		"hiddenMember":         func(m types.Member) bool { return hiddenMember(m, config) },
-		"isLocalType":          func(t *types.Type) bool { return isLocalType(t, config) },
+		"isExportedType":    isExportedType,
+		"fieldName":         fieldName,
+		"fieldEmbedded":     fieldEmbedded,
+		"typeIdentifier":    func(t *types.Type) string { return typeIdentifier(t, config) },
+		"typeDisplayName":   func(t *types.Type) string { return typeDisplayName(t, config) },
+		"visibleTypes":      func(t []*types.Type) []*types.Type { return visibleTypes(t, config) },
+		"trimPackagePrefix": func(s string) string { return trimPackagePrefix(s, config) },
+		"showComment":       showComment,
+		"nl2br":             nl2br,
+		"apiGroup":          func(t *types.Type) string { return apiGroup(t, config) },
+		"linkForType": func(t *types.Type) string {
+			v, err := linkForType(t, config)
+			if err != nil {
+				klog.Fatal(errors.Wrapf(err, "error getting link for type=%s", t.Name))
+			}
+			return v
+		},
+		"safe":           safe,
+		"sortedTypes":    sortedTypes,
+		"typeReferences": func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
+		"hiddenMember":   func(m types.Member) bool { return hiddenMember(m, config) },
+		"isLocalType":    func(t *types.Type) bool { return isLocalType(t, config) },
 	}).ParseGlob("template/*.tpl")
 	if err != nil {
 		return errors.Wrap(err, "parse error")

@@ -10,27 +10,31 @@ table, td, th {
 {{ range .packages }}
     <h2>{{trimPackagePrefix .Path}}</h2>
     Types:
-    {{ range (visibleTypes (sortedTypes .Types)) }}
     <ul>
-        {{ if isExportedType . }}
-        <ol>
-            <a href="#{{localTypeIdentifier .}}">{{localTypeIdentifier .}}</a>
-        </ol>
-        {{ end }}
+    {{- range (visibleTypes (sortedTypes .Types)) -}}
+        {{ if isExportedType . -}}
+        <li>
+            <a href="#{{ typeIdentifier . }}">{{ typeIdentifier . }}</a>
+        </li>
+        {{- end }}
+        {{- end -}}
     </ul>
-    {{ end }}
 
     {{ range (visibleTypes (sortedTypes .Types))}}
-        <h3 id="{{ .Name.Name }}">{{ .Name.Name }}</h3>
-        {{ if eq .Kind "Alias" }}<p>(This type is an alias to
-            <code>{{.Underlying}}</code>.)</p>{{ end }}
-
+        <h3 id="{{ .Name.Name }}">
+            {{- .Name.Name }}
+            {{ if eq .Kind "Alias" }}(<code>{{.Underlying}}</code> alias)</p>{{ end -}}
+        </h3>
         {{ with (typeReferences .) }}
             <p>
-                <em>Appears on:</em>
+                (<em>Appears on:</em>
+                {{ $prev := "" }}
                 {{ range . }}
-                    <a href="#{{localTypeIdentifier .}}">{{localTypeDisplayName .}}</a>
-                {{ end }}
+                    {{- if $prev -}}, {{ end -}}
+                    {{ $prev = . }}
+                    <a href="#{{ typeIdentifier . }}">{{ typeDisplayName . }}</a>
+                {{- end -}}
+                )
             </p>
         {{ end }}
 

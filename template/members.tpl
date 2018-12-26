@@ -6,12 +6,12 @@
     <td>
         <code>{{ fieldName . }}</code></br>
         <em>
-            {{ if isLocalType .Type }}
-                <a href="#{{localTypeIdentifier .Type}}">
-                    {{localTypeDisplayName .Type}}
+            {{ if linkForType .Type }}
+                <a href="{{linkForType .Type}}">
+                    {{ typeDisplayName .Type }}
                 </a>
             {{ else }}
-                {{ .Type.Name }}
+                {{ typeDisplayName .Type }}
             {{ end }}
         </em>
     </td>
@@ -23,7 +23,7 @@
         {{ end}}
     {{ safe (nl2br (showComment .CommentLines)) }}
 
-    {{ if or (eq (fieldName .) "spec") (eq (fieldName .) "status") }}
+    {{ if or (eq (fieldName .) "spec") }}
         <br/>
         <br/>
         <table>
