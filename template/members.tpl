@@ -23,6 +23,13 @@
         {{ end}}
     {{ safe (nl2br (showComment .CommentLines)) }}
 
+    {{ if eq (.Type.Name.Name) "ObjectMeta" }}
+        <p><em>
+            (Refer to the Kubernetes API documentation for the fields of the
+            <code>metadata</code> field.)
+        </em></p>
+    {{ end }}
+
     {{ if or (eq (fieldName .) "spec") }}
         <br/>
         <br/>

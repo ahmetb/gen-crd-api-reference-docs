@@ -304,10 +304,14 @@ func apiGroup(t *types.Type, c generatorConfig) string {
 }
 func typeReferences(t *types.Type, c generatorConfig, references map[*types.Type][]*types.Type) []*types.Type {
 	var out []*types.Type
+	m := make(map[*types.Type]struct{})
 	for _, ref := range references[t] {
 		if !hideType(ref, c) {
-			out = append(out, ref)
+			m[ref] = struct{}{}
 		}
+	}
+	for k := range m {
+		out = append(out, k)
 	}
 	return out
 }
