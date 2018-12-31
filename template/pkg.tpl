@@ -28,8 +28,8 @@ table, td, th {
         {{ with (typeReferences .) }}
             <p>
                 (<em>Appears on:</em>
-                {{ $prev := "" }}
-                {{ range . }}
+                {{- $prev := "" -}}
+                {{- range . -}}
                     {{- if $prev -}}, {{ end -}}
                     {{ $prev = . }}
                     <a href="#{{ typeIdentifier . }}">{{ typeDisplayName . }}</a>

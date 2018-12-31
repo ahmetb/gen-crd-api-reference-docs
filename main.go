@@ -7,6 +7,8 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"sort"
@@ -25,6 +27,8 @@ var (
 	flOutDir    = flag.String("out", "out", "output directory")
 	flAPIDir    = flag.String("api-dir", "", "api directory (or import path), point this to pkg/apis")
 	flAPIPrefix = flag.String("api-prefix", `github.com/knative/serving/pkg/apis/`, "match APIs with this package prefix")
+
+	tplDir string
 )
 
 type externalPackage struct {
@@ -33,14 +37,15 @@ type externalPackage struct {
 }
 
 type generatorConfig struct {
+	// APIGroups maps package import paths to Kubernetes API Groups.
+	APIGroups map[string]string `json:"apiGroups"`
+
 	PackagePrefix      string   `json:"packagePrefix"`
 	HiddenMemberFields []string `json:"hideMemberFields"`
 	HideTypePatterns   []string `json:"hideTypePatterns"`
 
-	// APIGroups maps package import paths to Kubernetes API Groups.
-	APIGroups map[string]string `json:"apiGroups"`
-
-	ExternalPackages []externalPackage `json:"externalPackages"`
+	ExternalPackages               []externalPackage `json:"externalPackages"`
+	TypeDisplayNamePrefixOverrides map[string]string `json:"typeDisplayNamePrefixOverrides"`
 }
 
 func init() {
@@ -56,6 +61,18 @@ func init() {
 	}
 	if *flAPIPrefix == "" {
 		panic("-api-prefix not specified")
+	}
+
+	self := os.Args[0]
+	f, err := filepath.EvalSymlinks(self)
+	if err != nil {
+		panic(errors.Wrap(err, "failed to read symlink of the executing binary"))
+	}
+	tplDir = filepath.Join(filepath.Dir(f), "template")
+	if fi, err := os.Stat(tplDir); err != nil {
+		panic(errors.Wrap(err, "cannot read \"template\" dir next to the binary"))
+	} else if !fi.IsDir() {
+		panic(errors.Wrap(err, "\"template\" path is not a directory"))
 	}
 }
 
@@ -92,6 +109,10 @@ func main() {
 				DocsURLTemplate: "https://godoc.org/github.com/knative/pkg/apis/duck/{{arrIndex .PackageSegments -1}}#{{.TypeIdentifier}}",
 			},
 		},
+		TypeDisplayNamePrefixOverrides: map[string]string{
+			"k8s.io/apimachinery/pkg/apis/": "Kubernetes ",
+			"k8s.io/api/":                   "Kubernetes ",
+		},
 	}
 
 	klog.Infof("using api directory %s", *flAPIDir)
@@ -111,9 +132,18 @@ func main() {
 	h := func(w http.ResponseWriter, r *http.Request) {
 		now := time.Now()
 		defer func() { klog.Infof("request took %v", time.Since(now)) }()
-		err := render(w, pkgs, config)
+
+		var b bytes.Buffer
+		err := render(&b, pkgs, config)
 		if err != nil {
-			fmt.Fprintf(w, "%+v", err)
+			klog.Warningf("render error: %+v", err)
+		}
+
+		// remove trailing whitespace from each html line for markdown rendering
+		s := regexp.MustCompile(`(?m)^\s+`).ReplaceAllString(b.String(), "")
+
+		if _, err := fmt.Fprint(w, s); err != nil {
+			klog.Warningf("response write error: %v", err)
 		}
 	}
 	http.HandleFunc("/", h)
@@ -193,7 +223,7 @@ func isLocalType(t *types.Type, c generatorConfig) bool {
 
 func showComment(s []string) string { return strings.Join(s, "\n") }
 func nl2br(s string) string {
-	return strings.Replace(s, "\n", string(template.HTML("</br/>")), -1)
+	return strings.Replace(s, "\n", string(template.HTML("<br/>")), -1)
 }
 func safe(s string) template.HTML { return template.HTML(s) }
 
@@ -272,17 +302,36 @@ func linkForType(t *types.Type, c generatorConfig) (string, error) {
 
 func typeDisplayName(t *types.Type, c generatorConfig) string {
 	s := typeIdentifier(t, c)
-	switch t.Kind {
-	case types.Struct, types.Interface, types.Alias, types.Builtin: // noop
-	case types.Map:
-		return t.Name.Name
-	case types.Pointer:
+	if t.Kind == types.Pointer {
 		s = strings.TrimLeft(s, "*")
-	case types.Slice:
-		s = "[]" + s
+	}
+
+	switch t.Kind {
+	case types.Struct,
+		types.Interface,
+		types.Alias,
+		types.Pointer,
+		types.Slice,
+		types.Builtin:
+		// noop
+	case types.Map:
+		// return original name
+		return t.Name.Name
 	default:
 		klog.Fatalf("type %s has kind=%v which is unhandled", t.Name, t.Kind)
 	}
+
+	// substitute prefix, if registered
+	for prefix, replacement := range c.TypeDisplayNamePrefixOverrides {
+		if strings.HasPrefix(s, prefix) {
+			s = strings.Replace(s, prefix, replacement, 1)
+		}
+	}
+
+	if t.Kind == types.Slice {
+		s = "[]" + s
+	}
+
 	return s
 }
 
@@ -369,7 +418,7 @@ func render(w io.Writer, pkgs []*types.Package, config generatorConfig) error {
 		"typeReferences": func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
 		"hiddenMember":   func(m types.Member) bool { return hiddenMember(m, config) },
 		"isLocalType":    func(t *types.Type) bool { return isLocalType(t, config) },
-	}).ParseGlob("template/*.tpl")
+	}).ParseGlob(filepath.Join(tplDir, "*.tpl"))
 	if err != nil {
 		return errors.Wrap(err, "parse error")
 	}
