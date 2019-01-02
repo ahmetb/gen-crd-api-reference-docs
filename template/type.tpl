@@ -1,7 +1,7 @@
 {{ define "type" }}
 
 <p>
-    {{ safe (nl2br (showComment .CommentLines)) }}
+    {{ safe (nl2br (showComments .CommentLines)) }}
 </p>
 
 {{ if .Members }}

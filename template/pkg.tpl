@@ -8,7 +8,16 @@ table, td, th {
 <h1>API Reference Documentation</h1>
 
 {{ range .packages }}
-    <h2>{{.Path}}</h2>
+    <h2>
+        {{ packageDisplayName . }}
+    </h2>
+
+    {{ with .DocComments }}
+    <p>
+        {{ showComments . }}
+    </p>
+    {{ end }}
+
     Resource Types:
     <ul>
     {{- range (visibleTypes (sortedTypes .Types)) -}}

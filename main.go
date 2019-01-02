@@ -139,7 +139,20 @@ func main() {
 	}
 	http.HandleFunc("/", h)
 	klog.Infof("server listening")
-	klog.Fatal(http.ListenAndServe("localhost:8080", nil))
+	addr := "localhost:8080"
+	if envAddr := os.Getenv("LISTEN_ADDR"); envAddr != "" {
+		addr = envAddr
+	}
+	klog.Fatal(http.ListenAndServe(addr, nil))
+}
+
+func groupName(pkg *types.Package) string {
+	m := types.ExtractCommentTags("+", pkg.DocComments)
+	v := m["groupName"]
+	if len(v) == 1 {
+		return v[0]
+	}
+	return ""
 }
 
 func parseAPIPackages(dir string) ([]*types.Package, error) {
@@ -184,6 +197,8 @@ func findTypeReferences(pkgs []*types.Package) map[*types.Type][]*types.Type {
 }
 
 func isExportedType(t *types.Type) bool {
+	// TODO(ahmetb) use types.ExtractSingleBoolCommentTag() to parse +genclient
+	// https://godoc.org/k8s.io/gengo/types#ExtractCommentTags
 	return strings.Contains(strings.Join(t.SecondClosestCommentLines, "\n"), "+genclient")
 }
 
@@ -208,7 +223,11 @@ func isLocalType(t *types.Type, c generatorConfig) bool {
 	return strings.HasPrefix(t.Name.Package, *flAPIPrefix)
 }
 
-func showComment(s []string) string { return strings.Join(s, "\n") }
+func showComments(s []string) string {
+	s = filterCommentTags(s)
+	return strings.Join(s, "\n")
+}
+
 func nl2br(s string) string {
 	return strings.Replace(s, "\n", string(template.HTML("<br/>")), -1)
 }
@@ -379,19 +398,43 @@ func visibleTypes(in []*types.Type, c generatorConfig) []*types.Type {
 	return out
 }
 
+func packageDisplayName(pkg *types.Package) string {
+	if g := groupName(pkg); g != "" {
+		return g
+	}
+	return pkg.Path // go import path
+}
+
+func filterCommentTags(comments []string) []string {
+	var out []string
+	for _, v := range comments {
+		if !strings.HasPrefix(strings.TrimSpace(v), "+") {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func isOptionalMember(m types.Member) bool {
+	tags := types.ExtractCommentTags("+", m.CommentLines)
+	_, ok := tags["optional"]
+	return ok
+}
+
 func render(w io.Writer, pkgs []*types.Package, config generatorConfig) error {
 	references := findTypeReferences(pkgs)
 
 	t, err := template.New("").Funcs(map[string]interface{}{
-		"isExportedType":  isExportedType,
-		"fieldName":       fieldName,
-		"fieldEmbedded":   fieldEmbedded,
-		"typeIdentifier":  func(t *types.Type) string { return typeIdentifier(t, config) },
-		"typeDisplayName": func(t *types.Type) string { return typeDisplayName(t, config) },
-		"visibleTypes":    func(t []*types.Type) []*types.Type { return visibleTypes(t, config) },
-		"showComment":     showComment,
-		"nl2br":           nl2br,
-		"apiGroup":        func(t *types.Type) string { return apiGroup(t, config) },
+		"isExportedType":     isExportedType,
+		"fieldName":          fieldName,
+		"fieldEmbedded":      fieldEmbedded,
+		"typeIdentifier":     func(t *types.Type) string { return typeIdentifier(t, config) },
+		"typeDisplayName":    func(t *types.Type) string { return typeDisplayName(t, config) },
+		"visibleTypes":       func(t []*types.Type) []*types.Type { return visibleTypes(t, config) },
+		"showComments":       showComments,
+		"nl2br":              nl2br,
+		"packageDisplayName": packageDisplayName,
+		"apiGroup":           func(t *types.Type) string { return apiGroup(t, config) },
 		"linkForType": func(t *types.Type) string {
 			v, err := linkForType(t, config)
 			if err != nil {
@@ -399,11 +442,12 @@ func render(w io.Writer, pkgs []*types.Package, config generatorConfig) error {
 			}
 			return v
 		},
-		"safe":           safe,
-		"sortedTypes":    sortedTypes,
-		"typeReferences": func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
-		"hiddenMember":   func(m types.Member) bool { return hiddenMember(m, config) },
-		"isLocalType":    func(t *types.Type) bool { return isLocalType(t, config) },
+		"safe":             safe,
+		"sortedTypes":      sortedTypes,
+		"typeReferences":   func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
+		"hiddenMember":     func(m types.Member) bool { return hiddenMember(m, config) },
+		"isLocalType":      func(t *types.Type) bool { return isLocalType(t, config) },
+		"isOptionalMember": isOptionalMember,
 	}).ParseGlob(filepath.Join(tplDir, "*.tpl"))
 	if err != nil {
 		return errors.Wrap(err, "parse error")

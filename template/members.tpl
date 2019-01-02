@@ -21,7 +21,12 @@
                 (Members of <code>{{ fieldName . }}</code> are embedded into this type.)
             </p>
         {{ end}}
-    {{ safe (nl2br (showComment .CommentLines)) }}
+
+        {{ if isOptionalMember .}}
+            <em>(Optional)</em>
+        {{ end }}
+
+        {{ safe (nl2br (showComments .CommentLines)) }}
 
     {{ if eq (.Type.Name.Name) "ObjectMeta" }}
         <p><em>
