@@ -229,7 +229,7 @@ func showComments(s []string) string {
 }
 
 func nl2br(s string) string {
-	return strings.Replace(s, "\n", string(template.HTML("<br/>")), -1)
+	return strings.Replace(s, "\n\n", string(template.HTML("<br/><br/>")), -1)
 }
 func safe(s string) template.HTML { return template.HTML(s) }
 
