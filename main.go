@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"html/template"
@@ -24,7 +25,7 @@ import (
 )
 
 var (
-	flOutDir    = flag.String("out", "out", "output directory")
+	flConfig    = flag.String("config", "", "path to config file")
 	flAPIDir    = flag.String("api-dir", "", "api directory (or import path), point this to pkg/apis")
 	flAPIPrefix = flag.String("api-prefix", `github.com/knative/serving/pkg/apis/`, "match APIs with this package prefix")
 
@@ -40,21 +41,33 @@ type generatorConfig struct {
 	// APIGroups maps package import paths to Kubernetes API Groups.
 	APIGroups map[string]string `json:"apiGroups"`
 
-	PackagePrefix      string   `json:"packagePrefix"`
+	// HiddenMemberFields hides fields with specified names on all types.
 	HiddenMemberFields []string `json:"hideMemberFields"`
-	HideTypePatterns   []string `json:"hideTypePatterns"`
 
-	ExternalPackages               []externalPackage `json:"externalPackages"`
+	// HideTypePatterns hides types matching the specified patterns from the
+	// output.
+	HideTypePatterns []string `json:"hideTypePatterns"`
+
+	// ExternalPackages lists recognized external package references and how to
+	// link to them.
+	ExternalPackages []externalPackage `json:"externalPackages"`
+
+	// TypeDisplayNamePrefixOverrides is a mapping of how to override displayed
+	// name for types with certain prefixes with what value.
 	TypeDisplayNamePrefixOverrides map[string]string `json:"typeDisplayNamePrefixOverrides"`
 }
 
 func init() {
+	if err := resolveTemplateDir(); err != nil {
+		panic(err)
+	}
+
 	klog.InitFlags(nil)
 	flag.Set("alsologtostderr", "true") // for klog
 	flag.Parse()
 
-	if *flOutDir == "" {
-		panic("-out not specified")
+	if *flConfig == "" {
+		panic("-config not specified")
 	}
 	if *flAPIDir == "" {
 		panic("-api-dir not specified")
@@ -62,57 +75,35 @@ func init() {
 	if *flAPIPrefix == "" {
 		panic("-api-prefix not specified")
 	}
+}
 
+func resolveTemplateDir() error {
 	self := os.Args[0]
 	f, err := filepath.EvalSymlinks(self)
 	if err != nil {
-		panic(errors.Wrap(err, "failed to read symlink of the executing binary"))
+		return errors.Wrap(err, "failed to read symlink of the executing binary")
 	}
 	tplDir = filepath.Join(filepath.Dir(f), "template")
 	if fi, err := os.Stat(tplDir); err != nil {
-		panic(errors.Wrap(err, "cannot read \"template\" dir next to the binary"))
+		return errors.Wrap(err, "cannot read \"template\" dir next to the binary")
 	} else if !fi.IsDir() {
-		panic(errors.Wrap(err, "\"template\" path is not a directory"))
+		return errors.Wrap(err, "\"template\" path is not a directory")
 	}
+	return nil
 }
 
 func main() {
 	defer klog.Flush()
 
-	config := generatorConfig{
-		PackagePrefix: *flAPIPrefix,
-		HiddenMemberFields: []string{
-			"TypeMeta", // apiVersion and Kind shown separately.
-		},
-		HideTypePatterns: []string{
-			"ParseError$", // LastPinnedParseError, configurationGenerationParseError, AnnotationParseError
-			"List$",       // list types are not useful
-		},
-		APIGroups: map[string]string{
-			"github.com/knative/serving/pkg/apis/serving/v1alpha1":     "serving.knative.dev/v1alpha1",
-			"github.com/knative/serving/pkg/apis/networking/v1alpha1":  "networking.internal.knative.dev/v1alpha1",
-			"github.com/knative/serving/pkg/apis/autoscaling/v1alpha1": "autoscaling.knative.dev/v1alpha1",
-			"github.com/knative/build/pkg/apis/build/v1alpha1":         "build.knative.dev/v1alpha1",
-		},
-		ExternalPackages: []externalPackage{
-			{
-				// this type doesn't exist in k8s API docs, link to godoc instead
-				TypeMatchPrefix: `^k8s\.io/apimachinery/pkg/apis/meta/v1\.Duration$`,
-				DocsURLTemplate: "https://godoc.org/k8s.io/apimachinery/pkg/apis/meta/v1#Duration",
-			},
-			{
-				TypeMatchPrefix: `^k8s\.io/(api|apimachinery/pkg/apis)/`,
-				DocsURLTemplate: "https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.13/#{{lower .TypeIdentifier}}-{{arrIndex .PackageSegments -1}}-{{arrIndex .PackageSegments -2}}",
-			},
-			{
-				TypeMatchPrefix: `^github\.com/knative/pkg/apis/duck/`,
-				DocsURLTemplate: "https://godoc.org/github.com/knative/pkg/apis/duck/{{arrIndex .PackageSegments -1}}#{{.TypeIdentifier}}",
-			},
-		},
-		TypeDisplayNamePrefixOverrides: map[string]string{
-			"k8s.io/apimachinery/pkg/apis/": "Kubernetes ",
-			"k8s.io/api/":                   "Kubernetes ",
-		},
+	f, err := os.Open(*flConfig)
+	if err != nil {
+		panic(errors.Wrap(err, "failed to open config file"))
+	}
+	d := json.NewDecoder(f)
+	d.DisallowUnknownFields()
+	var config generatorConfig
+	if err := d.Decode(&config); err != nil {
+		panic(errors.Wrap(err, "failed to parse config file"))
 	}
 
 	klog.Infof("using api directory %s", *flAPIDir)
@@ -196,10 +187,6 @@ func isExportedType(t *types.Type) bool {
 	return strings.Contains(strings.Join(t.SecondClosestCommentLines, "\n"), "+genclient")
 }
 
-func trimPackagePrefix(s string, c generatorConfig) string {
-	return strings.TrimPrefix(s, c.PackagePrefix)
-}
-
 func fieldName(m types.Member) string {
 	v := reflect.StructTag(m.Tags).Get("json")
 	v = strings.TrimSuffix(v, ",omitempty")
@@ -218,7 +205,7 @@ func isLocalType(t *types.Type, c generatorConfig) bool {
 	if t.Elem != nil {
 		t = t.Elem
 	}
-	return strings.HasPrefix(t.Name.Package, c.PackagePrefix)
+	return strings.HasPrefix(t.Name.Package, *flAPIPrefix)
 }
 
 func showComment(s []string) string { return strings.Join(s, "\n") }
@@ -396,16 +383,15 @@ func render(w io.Writer, pkgs []*types.Package, config generatorConfig) error {
 	references := findTypeReferences(pkgs)
 
 	t, err := template.New("").Funcs(map[string]interface{}{
-		"isExportedType":    isExportedType,
-		"fieldName":         fieldName,
-		"fieldEmbedded":     fieldEmbedded,
-		"typeIdentifier":    func(t *types.Type) string { return typeIdentifier(t, config) },
-		"typeDisplayName":   func(t *types.Type) string { return typeDisplayName(t, config) },
-		"visibleTypes":      func(t []*types.Type) []*types.Type { return visibleTypes(t, config) },
-		"trimPackagePrefix": func(s string) string { return trimPackagePrefix(s, config) },
-		"showComment":       showComment,
-		"nl2br":             nl2br,
-		"apiGroup":          func(t *types.Type) string { return apiGroup(t, config) },
+		"isExportedType":  isExportedType,
+		"fieldName":       fieldName,
+		"fieldEmbedded":   fieldEmbedded,
+		"typeIdentifier":  func(t *types.Type) string { return typeIdentifier(t, config) },
+		"typeDisplayName": func(t *types.Type) string { return typeDisplayName(t, config) },
+		"visibleTypes":    func(t []*types.Type) []*types.Type { return visibleTypes(t, config) },
+		"showComment":     showComment,
+		"nl2br":           nl2br,
+		"apiGroup":        func(t *types.Type) string { return apiGroup(t, config) },
 		"linkForType": func(t *types.Type) string {
 			v, err := linkForType(t, config)
 			if err != nil {

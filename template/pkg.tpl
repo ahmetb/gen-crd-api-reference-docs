@@ -8,7 +8,7 @@ table, td, th {
 <h1>API Reference Documentation</h1>
 
 {{ range .packages }}
-    <h2>{{trimPackagePrefix .Path}}</h2>
+    <h2>{{.Path}}</h2>
     Types:
     <ul>
     {{- range (visibleTypes (sortedTypes .Types)) -}}
