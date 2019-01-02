@@ -8,6 +8,9 @@ which is auto-generated. But for the time being, Kubernetes API does not provide
 OpenAPI specs for CRDs (e.g. Knative), therefore we cannot use the same
 generator.
 
+Proposal for generating API Reference docs for Knative:
+https://github.com/knative/docs/issues/636.
+
 ## How?
 
 This is a custom API Reference Docs generator that uses the
@@ -24,10 +27,12 @@ generate API documentation from it.
    and call the compiled binary within that directory.
 
     ```sh
+    # go into a repository root with GOPATH set. (I use my own script
+    # goclone(1) to have a separate GOPATH for each repo I clone.)
     $ goclone knative/build
 
     $ refdocs \
-        -config "/path/to/knative-generator-config.json"
+        -config "/path/to/knative-config.json"
         -api-dir "github.com/knative/build/pkg/apis/build/v1alpha1" \
         -api-prefix "github.com/knative/build/pkg/apis/"
     ```
