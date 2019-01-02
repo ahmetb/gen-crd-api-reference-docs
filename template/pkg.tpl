@@ -9,7 +9,7 @@ table, td, th {
 
 {{ range .packages }}
     <h2>{{.Path}}</h2>
-    Types:
+    Resource Types:
     <ul>
     {{- range (visibleTypes (sortedTypes .Types)) -}}
         {{ if isExportedType . -}}
@@ -17,7 +17,7 @@ table, td, th {
             <a href="#{{ typeIdentifier . }}">{{ typeIdentifier . }}</a>
         </li>
         {{- end }}
-        {{- end -}}
+    {{- end -}}
     </ul>
 
     {{ range (visibleTypes (sortedTypes .Types))}}
