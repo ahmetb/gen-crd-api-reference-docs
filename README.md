@@ -32,12 +32,13 @@ generate API documentation from it.
     $ goclone knative/build
 
     $ refdocs \
-        -config "/path/to/knative-config.json"
+        -config "/path/to/knative-config.json" \
         -api-dir "github.com/knative/build/pkg/apis/build/v1alpha1" \
-        -api-prefix "github.com/knative/build/pkg/apis/"
+        -api-prefix "github.com/knative/build/pkg/apis/" \
+        -out-file docs.html
     ```
 
-4. Visit [localhost:8080](localhost:8080) to view generated documentation.
+4. Visit `docs.html` to view the results.
 
 -----
 

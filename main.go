@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -27,15 +28,13 @@ import (
 var (
 	flConfig    = flag.String("config", "", "path to config file")
 	flAPIDir    = flag.String("api-dir", "", "api directory (or import path), point this to pkg/apis")
-	flAPIPrefix = flag.String("api-prefix", `github.com/knative/serving/pkg/apis/`, "match APIs with this package prefix")
+	flAPIPrefix = flag.String("api-prefix", "", "(optional) match only APIs with this package prefix")
+
+	flHTTPAddr = flag.String("http-addr", "", "start an HTTP server on specified addr to view the result (e.g. :8080)")
+	flOutFile  = flag.String("out-file", "", "path to output file to save the result")
 
 	tplDir string
 )
-
-type externalPackage struct {
-	TypeMatchPrefix string `json:"typeMatchPrefix"`
-	DocsURLTemplate string `json:"docsURLTemplate"`
-}
 
 type generatorConfig struct {
 	// APIGroups maps package import paths to Kubernetes API Groups.
@@ -57,6 +56,11 @@ type generatorConfig struct {
 	TypeDisplayNamePrefixOverrides map[string]string `json:"typeDisplayNamePrefixOverrides"`
 }
 
+type externalPackage struct {
+	TypeMatchPrefix string `json:"typeMatchPrefix"`
+	DocsURLTemplate string `json:"docsURLTemplate"`
+}
+
 func init() {
 	if err := resolveTemplateDir(); err != nil {
 		panic(err)
@@ -74,6 +78,12 @@ func init() {
 	}
 	if *flAPIPrefix == "" {
 		panic("-api-prefix not specified")
+	}
+	if *flHTTPAddr == "" && *flOutFile == "" {
+		panic("-out-file or -http-addr must be specified")
+	}
+	if *flHTTPAddr != "" && *flOutFile != "" {
+		panic("only -out-file or -http-addr can be specified")
 	}
 }
 
@@ -120,30 +130,50 @@ func main() {
 		}
 	}
 
-	h := func(w http.ResponseWriter, r *http.Request) {
-		now := time.Now()
-		defer func() { klog.Infof("request took %v", time.Since(now)) }()
-
+	mkOutput := func() (string, error) {
 		var b bytes.Buffer
 		err := render(&b, pkgs, config)
 		if err != nil {
-			klog.Warningf("render error: %+v", err)
+			return "", errors.Wrap(err, "failed to render the result")
 		}
 
-		// remove trailing whitespace from each html line for markdown rendering
+		// remove trailing whitespace from each html line for markdown renderers
 		s := regexp.MustCompile(`(?m)^\s+`).ReplaceAllString(b.String(), "")
+		return s, nil
+	}
 
-		if _, err := fmt.Fprint(w, s); err != nil {
-			klog.Warningf("response write error: %v", err)
+	if *flOutFile != "" {
+		dir := filepath.Dir(*flOutFile)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			klog.Fatalf("failed to create dir %s: %v", dir, err)
 		}
+		s, err := mkOutput()
+		if err != nil {
+			klog.Fatalf("failed: %+v", err)
+		}
+		if err := ioutil.WriteFile(*flOutFile, []byte(s), 0644); err != nil {
+			klog.Fatalf("failed to write to out file: %v", err)
+		}
+		klog.Infof("written to %s", *flOutFile)
 	}
-	http.HandleFunc("/", h)
-	klog.Infof("server listening")
-	addr := "localhost:8080"
-	if envAddr := os.Getenv("LISTEN_ADDR"); envAddr != "" {
-		addr = envAddr
+
+	if *flHTTPAddr != "" {
+		h := func(w http.ResponseWriter, r *http.Request) {
+			now := time.Now()
+			defer func() { klog.Infof("request took %v", time.Since(now)) }()
+			s, err := mkOutput()
+			if err != nil {
+				fmt.Fprintf(w, "error: %+v", err)
+				klog.Warningf("failed: %+v", err)
+			}
+			if _, err := fmt.Fprint(w, s); err != nil {
+				klog.Warningf("response write error: %v", err)
+			}
+		}
+		http.HandleFunc("/", h)
+		klog.Infof("server listening at %s", *flHTTPAddr)
+		klog.Fatal(http.ListenAndServe(*flHTTPAddr, nil))
 	}
-	klog.Fatal(http.ListenAndServe(addr, nil))
 }
 
 func groupName(pkg *types.Package) string {
