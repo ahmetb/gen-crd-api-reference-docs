@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -393,6 +394,7 @@ func typeReferences(t *types.Type, c generatorConfig, references map[*types.Type
 	for k := range m {
 		out = append(out, k)
 	}
+	sortTypes(out)
 	return out
 }
 
@@ -401,8 +403,13 @@ func sortedTypes(typs map[string]*types.Type) []*types.Type {
 	for _, t := range typs {
 		out = append(out, t)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		t1, t2 := out[i], out[j]
+	sortTypes(out)
+	return out
+}
+
+func sortTypes(typs []*types.Type) {
+	sort.Slice(typs, func(i, j int) bool {
+		t1, t2 := typs[i], typs[j]
 		if isExportedType(t1) && !isExportedType(t2) {
 			return true
 		} else if !isExportedType(t1) && isExportedType(t2) {
@@ -410,7 +417,6 @@ func sortedTypes(typs map[string]*types.Type) []*types.Type {
 		}
 		return t1.Name.Name < t2.Name.Name
 	})
-	return out
 }
 
 func visibleTypes(in []*types.Type, c generatorConfig) []*types.Type {
@@ -464,6 +470,8 @@ func apiVersionMap(pkgs []*types.Package) (map[string]string, error) {
 func render(w io.Writer, pkgs []*types.Package, config generatorConfig) error {
 	references := findTypeReferences(pkgs)
 
+	gitCommit, _ := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
+
 	apiVersions, err := apiVersionMap(pkgs)
 	if err != nil {
 		return errors.Wrap(err, "failed to infer apiVersions")
@@ -500,7 +508,8 @@ func render(w io.Writer, pkgs []*types.Package, config generatorConfig) error {
 	}
 
 	return errors.Wrap(t.ExecuteTemplate(w, "packages", map[string]interface{}{
-		"packages": pkgs,
-		"config":   config,
+		"packages":  pkgs,
+		"config":    config,
+		"gitCommit": strings.TrimSpace(string(gitCommit)),
 	}), "template execution error")
 }
