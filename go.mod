@@ -1,4 +1,4 @@
-module refdocs
+module github.com/ahmetb/gen-crd-api-reference-docs/refdocs
 
 require (
 	github.com/pkg/errors v0.8.0
