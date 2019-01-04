@@ -40,6 +40,7 @@ Capabilities of this tool include:
 - [Configurable](./example-config.json) settings to hide certain fields or types
   entirely from the generated output.
 - Either output to a file or start a live http-server (for rapid iteration).
+- Supports markdown rendering from godoc type, package and field comments.
 
 ## Try it out
 
