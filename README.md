@@ -34,7 +34,6 @@ generate API documentation from it.
     $ refdocs \
         -config "/path/to/knative-config.json" \
         -api-dir "github.com/knative/build/pkg/apis/build/v1alpha1" \
-        -api-prefix "github.com/knative/build/pkg/apis/" \
         -out-file docs.html
     ```
 

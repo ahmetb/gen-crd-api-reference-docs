@@ -1,13 +1,4 @@
 {
-    "apiGroups": {
-        "github.com/knative/build/pkg/apis/build/v1alpha1": "build.knative.dev/v1alpha1",
-        "github.com/knative/serving/pkg/apis/autoscaling/v1alpha1": "autoscaling.knative.dev/v1alpha1",
-        "github.com/knative/serving/pkg/apis/networking/v1alpha1": "networking.internal.knative.dev/v1alpha1",
-        "github.com/knative/serving/pkg/apis/serving/v1alpha1": "serving.knative.dev/v1alpha1",
-        "github.com/knative/eventing/pkg/apis/eventing/v1alpha1": "eventing.knative.dev/v1alpha1",
-        "github.com/knative/eventing/pkg/apis/duck/v1alpha1": "duck.knative.dev/v1alpha1",
-        "github.com/knative/eventing-sources/pkg/apis/sources/v1alpha1": "sources.eventing.knative.dev/v1alpha1"
-    },
     "hideMemberFields": [
         "TypeMeta"
     ],

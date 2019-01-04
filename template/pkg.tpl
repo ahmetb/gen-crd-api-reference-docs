@@ -9,7 +9,7 @@ table, td, th {
 
 {{ range .packages }}
     <h2>
-        {{ packageDisplayName . }}
+        {{- packageDisplayName . -}}
     </h2>
 
     {{ with .DocComments }}

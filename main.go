@@ -26,20 +26,17 @@ import (
 )
 
 var (
-	flConfig    = flag.String("config", "", "path to config file")
-	flAPIDir    = flag.String("api-dir", "", "api directory (or import path), point this to pkg/apis")
-	flAPIPrefix = flag.String("api-prefix", "", "(optional) match only APIs with this package prefix")
+	flConfig = flag.String("config", "", "path to config file")
+	flAPIDir = flag.String("api-dir", "", "api directory (or import path), point this to pkg/apis")
 
 	flHTTPAddr = flag.String("http-addr", "", "start an HTTP server on specified addr to view the result (e.g. :8080)")
 	flOutFile  = flag.String("out-file", "", "path to output file to save the result")
 
-	tplDir string
+	tplDir      string
+	apiPackages []*types.Package
 )
 
 type generatorConfig struct {
-	// APIGroups maps package import paths to Kubernetes API Groups.
-	APIGroups map[string]string `json:"apiGroups"`
-
 	// HiddenMemberFields hides fields with specified names on all types.
 	HiddenMemberFields []string `json:"hideMemberFields"`
 
@@ -75,9 +72,6 @@ func init() {
 	}
 	if *flAPIDir == "" {
 		panic("-api-dir not specified")
-	}
-	if *flAPIPrefix == "" {
-		panic("-api-prefix not specified")
 	}
 	if *flHTTPAddr == "" && *flOutFile == "" {
 		panic("-out-file or -http-addr must be specified")
@@ -116,7 +110,7 @@ func main() {
 		panic(errors.Wrap(err, "failed to parse config file"))
 	}
 
-	klog.Infof("using api directory %s", *flAPIDir)
+	klog.Infof("parsing go packages in directory %s", *flAPIDir)
 	pkgs, err := parseAPIPackages(*flAPIDir)
 	if err != nil {
 		klog.Fatal(err)
@@ -124,11 +118,7 @@ func main() {
 	if len(pkgs) == 0 {
 		klog.Fatalf("no API packages found in %s", *flAPIDir)
 	}
-	for _, pkg := range pkgs {
-		if _, ok := config.APIGroups[pkg.Path]; !ok {
-			klog.Fatalf("config.APIGroups don't define an api group for package=%s", pkg.Path)
-		}
-	}
+	apiPackages = pkgs
 
 	mkOutput := func() (string, error) {
 		var b bytes.Buffer
@@ -197,14 +187,16 @@ func parseAPIPackages(dir string) ([]*types.Package, error) {
 	}
 	var pkgNames []string
 	for p := range scan {
-		klog.V(3).Infof("trying package=%v", p)
-		if strings.HasPrefix(p, *flAPIPrefix) && len(scan[p].Types) > 0 {
-			klog.V(3).Infof("package=%v is part of the API and has types", p)
+		klog.V(3).Infof("trying package=%v groupName=%s", p, groupName(scan[p]))
+		if groupName(scan[p]) != "" && len(scan[p].Types) > 0 {
+			klog.V(3).Infof("package=%v has groupName and has types", p)
 			pkgNames = append(pkgNames, p)
 		}
 	}
+	sort.Strings(pkgNames)
 	var pkgs []*types.Package
 	for _, p := range pkgNames {
+		klog.Infof("using package=%s", p)
 		pkgs = append(pkgs, scan[p])
 	}
 	return pkgs, nil
@@ -246,11 +238,17 @@ func fieldEmbedded(m types.Member) bool {
 	return strings.Contains(reflect.StructTag(m.Tags).Get("json"), ",inline")
 }
 
-func isLocalType(t *types.Type, c generatorConfig) bool {
+func isLocalType(t *types.Type) bool {
 	if t.Elem != nil {
 		t = t.Elem
 	}
-	return strings.HasPrefix(t.Name.Package, *flAPIPrefix)
+	pkg := t.Name.Package
+	for _, p := range apiPackages { // TODO(ahmetb) eliminate need for global var
+		if pkg == p.Path {
+			return true
+		}
+	}
+	return false
 }
 
 func showComments(s []string) string {
@@ -277,7 +275,7 @@ func typeIdentifier(t *types.Type, c generatorConfig) string {
 	if t.Elem != nil {
 		tt = t.Elem
 	}
-	if !isLocalType(t, c) {
+	if !isLocalType(t) {
 		return tt.Name.String() // {PackagePath.Name}
 	}
 	return tt.Name.Name // just {Name}
@@ -286,7 +284,7 @@ func typeIdentifier(t *types.Type, c generatorConfig) string {
 // linkForType returns an anchor to the type if it can be generated. returns
 // empty string if it is not a local type or unrecognized external type.
 func linkForType(t *types.Type, c generatorConfig) (string, error) {
-	if isLocalType(t, c) {
+	if isLocalType(t) {
 		return "#" + typeIdentifier(t, c), nil
 	}
 
@@ -384,9 +382,6 @@ func hideType(t *types.Type, c generatorConfig) bool {
 	return false
 }
 
-func apiGroup(t *types.Type, c generatorConfig) string {
-	return c.APIGroups[t.Name.Package]
-}
 func typeReferences(t *types.Type, c generatorConfig, references map[*types.Type][]*types.Type) []*types.Type {
 	var out []*types.Type
 	m := make(map[*types.Type]struct{})
@@ -451,8 +446,28 @@ func isOptionalMember(m types.Member) bool {
 	return ok
 }
 
+func apiVersionMap(pkgs []*types.Package) (map[string]string, error) {
+	m := make(map[string]string)
+	for _, pkg := range pkgs {
+		group := groupName(pkg)
+		version := pkg.Name // assumes last part (i.e. v1 in core/v1) is apiVersion
+		r := `^v\d+((alpha|beta)\d+)?$`
+		if !regexp.MustCompile(r).MatchString(version) {
+			return nil, errors.Errorf("cannot infer api version from package path %s (%q doesn't match %s)", pkg.Path, version, r)
+		}
+
+		m[pkg.Path] = fmt.Sprintf("%s/%s", group, version)
+	}
+	return m, nil
+}
+
 func render(w io.Writer, pkgs []*types.Package, config generatorConfig) error {
 	references := findTypeReferences(pkgs)
+
+	apiVersions, err := apiVersionMap(pkgs)
+	if err != nil {
+		return errors.Wrap(err, "failed to infer apiVersions")
+	}
 
 	t, err := template.New("").Funcs(map[string]interface{}{
 		"isExportedType":     isExportedType,
@@ -464,11 +479,12 @@ func render(w io.Writer, pkgs []*types.Package, config generatorConfig) error {
 		"showComments":       showComments,
 		"nl2br":              nl2br,
 		"packageDisplayName": packageDisplayName,
-		"apiGroup":           func(t *types.Type) string { return apiGroup(t, config) },
+		"apiGroup":           func(t *types.Type) string { return apiVersions[t.Name.Package] },
 		"linkForType": func(t *types.Type) string {
 			v, err := linkForType(t, config)
 			if err != nil {
 				klog.Fatal(errors.Wrapf(err, "error getting link for type=%s", t.Name))
+				return ""
 			}
 			return v
 		},
@@ -476,7 +492,7 @@ func render(w io.Writer, pkgs []*types.Package, config generatorConfig) error {
 		"sortedTypes":      sortedTypes,
 		"typeReferences":   func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
 		"hiddenMember":     func(m types.Member) bool { return hiddenMember(m, config) },
-		"isLocalType":      func(t *types.Type) bool { return isLocalType(t, config) },
+		"isLocalType":      isLocalType,
 		"isOptionalMember": isOptionalMember,
 	}).ParseGlob(filepath.Join(tplDir, "*.tpl"))
 	if err != nil {
