@@ -14,7 +14,7 @@ table, td, th {
 
     {{ with .DocComments }}
     <p>
-        {{ showComments . }}
+        {{ safe (renderComments .) }}
     </p>
     {{ end }}
 
@@ -30,23 +30,6 @@ table, td, th {
     </ul>
 
     {{ range (visibleTypes (sortedTypes .Types))}}
-        <h3 id="{{ .Name.Name }}">
-            {{- .Name.Name }}
-            {{ if eq .Kind "Alias" }}(<code>{{.Underlying}}</code> alias)</p>{{ end -}}
-        </h3>
-        {{ with (typeReferences .) }}
-            <p>
-                (<em>Appears on:</em>
-                {{- $prev := "" -}}
-                {{- range . -}}
-                    {{- if $prev -}}, {{ end -}}
-                    {{ $prev = . }}
-                    <a href="#{{ typeIdentifier . }}">{{ typeDisplayName . }}</a>
-                {{- end -}}
-                )
-            </p>
-        {{ end }}
-
         {{ template "type" .  }}
     {{ end }}
     <hr/>

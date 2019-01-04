@@ -21,6 +21,7 @@ import (
 	"unicode"
 
 	"github.com/pkg/errors"
+	"github.com/russross/blackfriday/v2"
 	"k8s.io/gengo/parser"
 	"k8s.io/gengo/types"
 	"k8s.io/klog"
@@ -52,6 +53,9 @@ type generatorConfig struct {
 	// TypeDisplayNamePrefixOverrides is a mapping of how to override displayed
 	// name for types with certain prefixes with what value.
 	TypeDisplayNamePrefixOverrides map[string]string `json:"typeDisplayNamePrefixOverrides"`
+
+	// MarkdownDisabled controls markdown rendering for comment lines.
+	MarkdownDisabled bool `json:"markdownDisabled"`
 }
 
 type externalPackage struct {
@@ -252,15 +256,23 @@ func isLocalType(t *types.Type) bool {
 	return false
 }
 
-func showComments(s []string) string {
+func renderComments(s []string, markdown bool) string {
 	s = filterCommentTags(s)
-	return strings.Join(s, "\n")
+	doc := strings.Join(s, "\n")
+
+	if markdown {
+		// TODO(ahmetb): when a comment includes stuff like "http://<service>"
+		// we treat this as a HTML tag with markdown renderer below. solve this.
+		return string(blackfriday.Run([]byte(doc)))
+	}
+	return nl2br(doc)
 }
+
+func safe(s string) template.HTML { return template.HTML(s) }
 
 func nl2br(s string) string {
 	return strings.Replace(s, "\n\n", string(template.HTML("<br/><br/>")), -1)
 }
-func safe(s string) template.HTML { return template.HTML(s) }
 
 func hiddenMember(m types.Member, c generatorConfig) bool {
 	for _, v := range c.HiddenMemberFields {
@@ -484,8 +496,7 @@ func render(w io.Writer, pkgs []*types.Package, config generatorConfig) error {
 		"typeIdentifier":     func(t *types.Type) string { return typeIdentifier(t, config) },
 		"typeDisplayName":    func(t *types.Type) string { return typeDisplayName(t, config) },
 		"visibleTypes":       func(t []*types.Type) []*types.Type { return visibleTypes(t, config) },
-		"showComments":       showComments,
-		"nl2br":              nl2br,
+		"renderComments":     func(s []string) string { return renderComments(s, !config.MarkdownDisabled) },
 		"packageDisplayName": packageDisplayName,
 		"apiGroup":           func(t *types.Type) string { return apiVersions[t.Name.Package] },
 		"linkForType": func(t *types.Type) string {

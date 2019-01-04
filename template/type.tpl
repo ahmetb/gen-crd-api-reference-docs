@@ -1,7 +1,25 @@
 {{ define "type" }}
 
+<h3 id="{{ .Name.Name }}">
+    {{- .Name.Name }}
+    {{ if eq .Kind "Alias" }}(<code>{{.Underlying}}</code> alias)</p>{{ end -}}
+</h3>
+{{ with (typeReferences .) }}
+    <p>
+        (<em>Appears on:</em>
+        {{- $prev := "" -}}
+        {{- range . -}}
+            {{- if $prev -}}, {{ end -}}
+            {{ $prev = . }}
+            <a href="#{{ typeIdentifier . }}">{{ typeDisplayName . }}</a>
+        {{- end -}}
+        )
+    </p>
+{{ end }}
+
+
 <p>
-    {{ safe (nl2br (showComments .CommentLines)) }}
+    {{ safe (renderComments .CommentLines) }}
 </p>
 
 {{ if .Members }}

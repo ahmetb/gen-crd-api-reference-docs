@@ -26,7 +26,7 @@
             <em>(Optional)</em>
         {{ end }}
 
-        {{ safe (nl2br (showComments .CommentLines)) }}
+        {{ safe (renderComments .CommentLines) }}
 
     {{ if and (eq (.Type.Name.Name) "ObjectMeta") }}
         Refer to the Kubernetes API documentation for the fields of the
