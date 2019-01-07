@@ -1,7 +1,18 @@
 {{ define "packages" }}
 
+{{ with .packages}}
+<p>Packages:</p>
+<ul>
+    {{ range . }}
+    <li>
+        <a href="#{{- packageDisplayName . -}}">{{ packageDisplayName . }}</a>
+    </li>
+    {{ end }}
+</ul>
+{{ end}}
+
 {{ range .packages }}
-    <h2>
+    <h2 id="{{- packageDisplayName . -}}">
         {{- packageDisplayName . -}}
     </h2>
 
