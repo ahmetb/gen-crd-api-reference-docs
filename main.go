@@ -94,9 +94,9 @@ func resolveTemplateDir() error {
 	}
 	tplDir = filepath.Join(filepath.Dir(f), "template")
 	if fi, err := os.Stat(tplDir); err != nil {
-		return errors.Wrap(err, "cannot read \"template\" dir next to the binary")
+		return errors.Wrapf(err, "cannot read the %s directory", tplDir)
 	} else if !fi.IsDir() {
-		return errors.Wrap(err, "\"template\" path is not a directory")
+		return errors.Errorf("%s path is not a directory", tplDir)
 	}
 	return nil
 }
@@ -106,13 +106,13 @@ func main() {
 
 	f, err := os.Open(*flConfig)
 	if err != nil {
-		panic(errors.Wrap(err, "failed to open config file"))
+		klog.Fatalf("failed to open config file: %+v", err)
 	}
 	d := json.NewDecoder(f)
 	d.DisallowUnknownFields()
 	var config generatorConfig
 	if err := d.Decode(&config); err != nil {
-		panic(errors.Wrap(err, "failed to parse config file"))
+		klog.Fatalf("failed to parse config file: %+v", err)
 	}
 
 	klog.Infof("parsing go packages in directory %s", *flAPIDir)
