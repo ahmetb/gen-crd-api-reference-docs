@@ -28,13 +28,13 @@ import (
 )
 
 var (
-	flConfig = flag.String("config", "", "path to config file")
-	flAPIDir = flag.String("api-dir", "", "api directory (or import path), point this to pkg/apis")
+	flConfig      = flag.String("config", "", "path to config file")
+	flAPIDir      = flag.String("api-dir", "", "api directory (or import path), point this to pkg/apis")
+	flTemplateDir = flag.String("template-dir", "template", "path to template/ dir")
 
 	flHTTPAddr = flag.String("http-addr", "", "start an HTTP server on specified addr to view the result (e.g. :8080)")
 	flOutFile  = flag.String("out-file", "", "path to output file to save the result")
 
-	tplDir      string
 	apiPackages []*types.Package
 )
 
@@ -64,10 +64,6 @@ type externalPackage struct {
 }
 
 func init() {
-	if err := resolveTemplateDir(); err != nil {
-		panic(err)
-	}
-
 	klog.InitFlags(nil)
 	flag.Set("alsologtostderr", "true") // for klog
 	flag.Parse()
@@ -84,19 +80,21 @@ func init() {
 	if *flHTTPAddr != "" && *flOutFile != "" {
 		panic("only -out-file or -http-addr can be specified")
 	}
+	if err := resolveTemplateDir(*flTemplateDir); err != nil {
+		panic(err)
+	}
+
 }
 
-func resolveTemplateDir() error {
-	self := os.Args[0]
-	f, err := filepath.EvalSymlinks(self)
+func resolveTemplateDir(dir string) error {
+	path, err := filepath.Abs(dir)
 	if err != nil {
-		return errors.Wrap(err, "failed to read symlink of the executing binary")
+		return err
 	}
-	tplDir = filepath.Join(filepath.Dir(f), "template")
-	if fi, err := os.Stat(tplDir); err != nil {
-		return errors.Wrapf(err, "cannot read the %s directory", tplDir)
+	if fi, err := os.Stat(path); err != nil {
+		return errors.Wrapf(err, "cannot read the %s directory", path)
 	} else if !fi.IsDir() {
-		return errors.Errorf("%s path is not a directory", tplDir)
+		return errors.Errorf("%s path is not a directory", path)
 	}
 	return nil
 }
@@ -513,7 +511,7 @@ func render(w io.Writer, pkgs []*types.Package, config generatorConfig) error {
 		"hiddenMember":     func(m types.Member) bool { return hiddenMember(m, config) },
 		"isLocalType":      isLocalType,
 		"isOptionalMember": isOptionalMember,
-	}).ParseGlob(filepath.Join(tplDir, "*.tpl"))
+	}).ParseGlob(filepath.Join(*flTemplateDir, "*.tpl"))
 	if err != nil {
 		return errors.Wrap(err, "parse error")
 	}
