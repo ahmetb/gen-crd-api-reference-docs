@@ -5,6 +5,14 @@ API Reference Docs [like this][ar] this tool is for you.
 
 [ar]: https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.13/
 
+## Example Users
+
+- **Knative API reference docs:**
+  [[serving](https://github.com/knative/docs/blob/a71f1b9ab42a889d6d48e265455060364ca1a885/reference/serving.md)],
+  [[build](https://github.com/knative/docs/blob/a71f1b9ab42a889d6d48e265455060364ca1a885/reference/build.md)],
+  [[eventing](https://github.com/knative/docs/blob/a71f1b9ab42a889d6d48e265455060364ca1a885/reference/eventing/eventing.md)].
+- _[[ADD YOUR PROJECT HERE]]_
+
 ## Why
 
 Normally you would want to use the same [docs generator][dg] as [Kubernetes API
