@@ -11,3 +11,6 @@ refdocs
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+
+# goreleaser output
+dist
