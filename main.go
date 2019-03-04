@@ -211,7 +211,7 @@ func findTypeReferences(pkgs []*types.Package) map[*types.Type][]*types.Type {
 		for _, typ := range pkg.Types {
 			for _, member := range typ.Members {
 				t := member.Type
-				if t.Elem != nil {
+				for t.Elem != nil {
 					t = t.Elem
 				}
 				m[t] = append(m[t], typ)
@@ -242,7 +242,7 @@ func fieldEmbedded(m types.Member) bool {
 }
 
 func isLocalType(t *types.Type) bool {
-	if t.Elem != nil {
+	for t.Elem != nil {
 		t = t.Elem
 	}
 	pkg := t.Name.Package
@@ -283,8 +283,8 @@ func hiddenMember(m types.Member, c generatorConfig) bool {
 
 func typeIdentifier(t *types.Type, c generatorConfig) string {
 	tt := t
-	if t.Elem != nil {
-		tt = t.Elem
+	for tt.Elem != nil {
+		tt = tt.Elem
 	}
 	if !isLocalType(t) {
 		return tt.Name.String() // {PackagePath.Name}
