@@ -7,8 +7,9 @@ API Reference Docs [like this][ar] this tool is for you.
 
 ## Current Users
 
-- [**Knative** API reference docs](https://www.knative.dev/docs/reference/)(https://github.com/knative/docs/blob/a71f1b9ab42a889d6d48e265455060364ca1a885/reference/eventing/eventing.md)].
+- [**Knative** API reference docs](https://www.knative.dev/docs/reference/)
 - [**Kubeflow** API reference docs](https://www.kubeflow.org/docs/reference/overview/)
+- [**Agones** API reference docs](https://agones.dev/site/docs/reference/agones_crd_api_reference/)
 - _[[ADD YOUR PROJECT HERE]]_
 
 ## Why
