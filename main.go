@@ -21,7 +21,7 @@ import (
 	"unicode"
 
 	"github.com/pkg/errors"
-	"github.com/russross/blackfriday/v2"
+	blackfriday "gopkg.in/russross/blackfriday.v2"
 	"k8s.io/gengo/parser"
 	"k8s.io/gengo/types"
 	"k8s.io/klog"
