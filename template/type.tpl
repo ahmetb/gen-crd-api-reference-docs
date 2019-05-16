@@ -1,6 +1,6 @@
 {{ define "type" }}
 
-<h3 id="{{ .Name.Name }}">
+<h3 id="{{ typeIdentifier . }}">
     {{- .Name.Name }}
     {{ if eq .Kind "Alias" }}(<code>{{.Underlying}}</code> alias)</p>{{ end -}}
 </h3>

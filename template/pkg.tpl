@@ -27,7 +27,7 @@
     {{- range (visibleTypes (sortedTypes .Types)) -}}
         {{ if isExportedType . -}}
         <li>
-            <a href="#{{ typeIdentifier . }}">{{ typeIdentifier . }}</a>
+            <a href="#{{ typeIdentifier . }}">{{ typeDisplayName . }}</a>
         </li>
         {{- end }}
     {{- end -}}
