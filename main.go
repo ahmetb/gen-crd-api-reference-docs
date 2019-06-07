@@ -286,10 +286,7 @@ func typeIdentifier(t *types.Type, c generatorConfig) string {
 	for tt.Elem != nil {
 		tt = tt.Elem
 	}
-	if !isLocalType(t) {
-		return tt.Name.String() // {PackagePath.Name}
-	}
-	return tt.Name.Name // just {Name}
+	return tt.Name.String() // {PackagePath.Name}
 }
 
 // linkForType returns an anchor to the type if it can be generated. returns
@@ -347,6 +344,9 @@ func linkForType(t *types.Type, c generatorConfig) (string, error) {
 
 func typeDisplayName(t *types.Type, c generatorConfig) string {
 	s := typeIdentifier(t, c)
+	if isLocalType(t) {
+		s = t.Name.Name
+	}
 	if t.Kind == types.Pointer {
 		s = strings.TrimLeft(s, "*")
 	}
