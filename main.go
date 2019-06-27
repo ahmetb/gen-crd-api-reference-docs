@@ -190,8 +190,18 @@ func parseAPIPackages(dir string) ([]*types.Package, error) {
 	}
 	var pkgNames []string
 	for p := range scan {
-		klog.V(3).Infof("trying package=%v groupName=%s", p, groupName(scan[p]))
-		if groupName(scan[p]) != "" && len(scan[p].Types) > 0 {
+		pkg := scan[p]
+		klog.V(3).Infof("trying package=%v groupName=%s", p, groupName(pkg))
+
+		// Do not pick up packages that are in vendor/ as API packages. (This
+		// happened in knative/eventing-sources/vendor/..., where a package
+		// matched the pattern, but it didn't have a compatible import path).
+		if isVendorPackage(pkg) {
+			klog.V(3).Infof("package=%v coming from vendor/, ignoring.", p)
+			continue
+		}
+
+		if groupName(pkg) != "" && len(pkg.Types) > 0 {
 			klog.V(3).Infof("package=%v has groupName and has types", p)
 			pkgNames = append(pkgNames, p)
 		}
@@ -203,6 +213,12 @@ func parseAPIPackages(dir string) ([]*types.Package, error) {
 		pkgs = append(pkgs, scan[p])
 	}
 	return pkgs, nil
+}
+
+// isVendorPackage determines if package is coming from vendor/ dir.
+func isVendorPackage(pkg *types.Package) bool {
+	vendorPattern := string(os.PathSeparator) + "vendor" + string(os.PathSeparator)
+	return strings.Contains(pkg.SourcePath, vendorPattern)
 }
 
 func findTypeReferences(pkgs []*types.Package) map[*types.Type][]*types.Type {
