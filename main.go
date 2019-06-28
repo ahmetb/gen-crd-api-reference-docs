@@ -297,7 +297,7 @@ func hiddenMember(m types.Member, c generatorConfig) bool {
 	return false
 }
 
-func typeIdentifier(t *types.Type, c generatorConfig) string {
+func typeIdentifier(t *types.Type) string {
 	tt := t
 	for tt.Elem != nil {
 		tt = tt.Elem
@@ -305,11 +305,21 @@ func typeIdentifier(t *types.Type, c generatorConfig) string {
 	return tt.Name.String() // {PackagePath.Name}
 }
 
+// apiGroupForType looks up apiGroup for the given type
+func apiGroupForType(t *types.Type, apiGroups map[string]string) string {
+	return apiGroups[t.Name.Package]
+}
+
+// anchorIDForLocalType returns the #anchor string for the local type
+func anchorIDForLocalType(t *types.Type, apiGroups map[string]string) string {
+	return fmt.Sprintf("%s.%s", apiGroupForType(t, apiGroups), t.Name.Name)
+}
+
 // linkForType returns an anchor to the type if it can be generated. returns
 // empty string if it is not a local type or unrecognized external type.
-func linkForType(t *types.Type, c generatorConfig) (string, error) {
+func linkForType(t *types.Type, c generatorConfig, apiGroups map[string]string) (string, error) {
 	if isLocalType(t) {
-		return "#" + typeIdentifier(t, c), nil
+		return "#" + anchorIDForLocalType(t, apiGroups), nil
 	}
 
 	var arrIndex = func(a []string, i int) string {
@@ -324,7 +334,7 @@ func linkForType(t *types.Type, c generatorConfig) (string, error) {
 	// k8s.io/api/core/v1.Container, k8s.io/api/autoscaling/v1.CrossVersionObjectReference,
 	// github.com/knative/build/pkg/apis/build/v1alpha1.BuildSpec
 	if t.Kind == types.Struct || t.Kind == types.Pointer || t.Kind == types.Interface || t.Kind == types.Alias {
-		id := typeIdentifier(t, c)                     // gives {{ImportPath.Identifier}} for type
+		id := typeIdentifier(t)                        // gives {{ImportPath.Identifier}} for type
 		segments := strings.Split(t.Name.Package, "/") // to parse [meta, v1] from "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 		for _, v := range c.ExternalPackages {
@@ -359,7 +369,7 @@ func linkForType(t *types.Type, c generatorConfig) (string, error) {
 }
 
 func typeDisplayName(t *types.Type, c generatorConfig) string {
-	s := typeIdentifier(t, c)
+	s := typeIdentifier(t)
 	if isLocalType(t) {
 		s = t.Name.Name
 	}
@@ -496,8 +506,6 @@ func apiVersionMap(pkgs []*types.Package) (map[string]string, error) {
 func render(w io.Writer, pkgs []*types.Package, config generatorConfig) error {
 	references := findTypeReferences(pkgs)
 
-	gitCommit, _ := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
-
 	apiVersions, err := apiVersionMap(pkgs)
 	if err != nil {
 		return errors.Wrap(err, "failed to infer apiVersions")
@@ -507,20 +515,21 @@ func render(w io.Writer, pkgs []*types.Package, config generatorConfig) error {
 		"isExportedType":     isExportedType,
 		"fieldName":          fieldName,
 		"fieldEmbedded":      fieldEmbedded,
-		"typeIdentifier":     func(t *types.Type) string { return typeIdentifier(t, config) },
+		"typeIdentifier":     func(t *types.Type) string { return typeIdentifier(t) },
 		"typeDisplayName":    func(t *types.Type) string { return typeDisplayName(t, config) },
 		"visibleTypes":       func(t []*types.Type) []*types.Type { return visibleTypes(t, config) },
 		"renderComments":     func(s []string) string { return renderComments(s, !config.MarkdownDisabled) },
 		"packageDisplayName": packageDisplayName,
 		"apiGroup":           func(t *types.Type) string { return apiVersions[t.Name.Package] },
 		"linkForType": func(t *types.Type) string {
-			v, err := linkForType(t, config)
+			v, err := linkForType(t, config, apiVersions)
 			if err != nil {
 				klog.Fatal(errors.Wrapf(err, "error getting link for type=%s", t.Name))
 				return ""
 			}
 			return v
 		},
+		"anchorIDForType":  func(t *types.Type) string { return anchorIDForLocalType(t, apiVersions) },
 		"safe":             safe,
 		"sortedTypes":      sortedTypes,
 		"typeReferences":   func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
@@ -532,6 +541,7 @@ func render(w io.Writer, pkgs []*types.Package, config generatorConfig) error {
 		return errors.Wrap(err, "parse error")
 	}
 
+	gitCommit, _ := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
 	return errors.Wrap(t.ExecuteTemplate(w, "packages", map[string]interface{}{
 		"packages":  pkgs,
 		"config":    config,

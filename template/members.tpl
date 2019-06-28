@@ -7,7 +7,7 @@
         <code>{{ fieldName . }}</code></br>
         <em>
             {{ if linkForType .Type }}
-                <a href="{{linkForType .Type}}">
+                <a href="{{ linkForType .Type}}">
                     {{ typeDisplayName .Type }}
                 </a>
             {{ else }}
