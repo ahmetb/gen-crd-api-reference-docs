@@ -34,8 +34,6 @@ var (
 
 	flHTTPAddr = flag.String("http-addr", "", "start an HTTP server on specified addr to view the result (e.g. :8080)")
 	flOutFile  = flag.String("out-file", "", "path to output file to save the result")
-
-	apiPackages []*types.Package
 )
 
 type generatorConfig struct {
@@ -62,6 +60,15 @@ type externalPackage struct {
 	TypeMatchPrefix string `json:"typeMatchPrefix"`
 	DocsURLTemplate string `json:"docsURLTemplate"`
 }
+
+type apiPackage struct {
+	apiGroup   string
+	apiVersion string
+	GoPackages []*types.Package
+	Types      []*types.Type // because multiple 'types.Package's can add types to an apiVersion
+}
+
+func (v *apiPackage) identifier() string { return fmt.Sprintf("%s/%s", v.apiGroup, v.apiVersion) }
 
 func init() {
 	klog.InitFlags(nil)
@@ -121,11 +128,15 @@ func main() {
 	if len(pkgs) == 0 {
 		klog.Fatalf("no API packages found in %s", *flAPIDir)
 	}
-	apiPackages = pkgs
+
+	apiPackages, err := combineAPIPackages(pkgs)
+	if err != nil {
+		klog.Fatal(err)
+	}
 
 	mkOutput := func() (string, error) {
 		var b bytes.Buffer
-		err := render(&b, pkgs, config)
+		err := render(&b, apiPackages, config)
 		if err != nil {
 			return "", errors.Wrap(err, "failed to render the result")
 		}
@@ -169,6 +180,8 @@ func main() {
 	}
 }
 
+// groupName extracts the "//+groupName" meta-comment from the specified
+// package's godoc, or returns empty string if it cannot be found.
 func groupName(pkg *types.Package) string {
 	m := types.ExtractCommentTags("+", pkg.DocComments)
 	v := m["groupName"]
@@ -215,21 +228,56 @@ func parseAPIPackages(dir string) ([]*types.Package, error) {
 	return pkgs, nil
 }
 
+// combineAPIPackages groups the Go packages by the <apiGroup+apiVersion> they
+// offer, and combines the types in them.
+func combineAPIPackages(pkgs []*types.Package) ([]*apiPackage, error) {
+	pkgMap := make(map[string]*apiPackage)
+
+	for _, pkg := range pkgs {
+		apiGroup, apiVersion, err := apiVersionForPackage(pkg)
+		if err != nil {
+			return nil, errors.Wrapf(err, "could not get apiVersion for package %s", pkg.Path)
+		}
+
+		typeList := make([]*types.Type, 0, len(pkg.Types))
+		for _, t := range pkg.Types {
+			typeList = append(typeList, t)
+		}
+
+		id := fmt.Sprintf("%s/%s", apiGroup, apiVersion)
+		v, ok := pkgMap[id]
+		if !ok {
+			pkgMap[id] = &apiPackage{
+				apiGroup:   apiGroup,
+				apiVersion: apiVersion,
+				Types:      typeList,
+				GoPackages: []*types.Package{pkg},
+			}
+		} else {
+			v.Types = append(v.Types, typeList...)
+			v.GoPackages = append(v.GoPackages, pkg)
+		}
+	}
+	out := make([]*apiPackage, 0, len(pkgMap))
+	for _, v := range pkgMap {
+		out = append(out, v)
+	}
+	return out, nil
+}
+
 // isVendorPackage determines if package is coming from vendor/ dir.
 func isVendorPackage(pkg *types.Package) bool {
 	vendorPattern := string(os.PathSeparator) + "vendor" + string(os.PathSeparator)
 	return strings.Contains(pkg.SourcePath, vendorPattern)
 }
 
-func findTypeReferences(pkgs []*types.Package) map[*types.Type][]*types.Type {
+func findTypeReferences(pkgs []*apiPackage) map[*types.Type][]*types.Type {
 	m := make(map[*types.Type][]*types.Type)
 	for _, pkg := range pkgs {
 		for _, typ := range pkg.Types {
 			for _, member := range typ.Members {
 				t := member.Type
-				for t.Elem != nil {
-					t = t.Elem
-				}
+				t = tryDereference(t)
 				m[t] = append(m[t], typ)
 			}
 		}
@@ -257,17 +305,10 @@ func fieldEmbedded(m types.Member) bool {
 	return strings.Contains(reflect.StructTag(m.Tags).Get("json"), ",inline")
 }
 
-func isLocalType(t *types.Type) bool {
-	for t.Elem != nil {
-		t = t.Elem
-	}
-	pkg := t.Name.Package
-	for _, p := range apiPackages { // TODO(ahmetb) eliminate need for global var
-		if pkg == p.Path {
-			return true
-		}
-	}
-	return false
+func isLocalType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) bool {
+	t = tryDereference(t)
+	_, ok := typePkgMap[t]
+	return ok
 }
 
 func renderComments(s []string, markdown bool) string {
@@ -298,36 +339,39 @@ func hiddenMember(m types.Member, c generatorConfig) bool {
 }
 
 func typeIdentifier(t *types.Type) string {
-	tt := t
-	for tt.Elem != nil {
-		tt = tt.Elem
-	}
-	return tt.Name.String() // {PackagePath.Name}
+	t = tryDereference(t)
+	return t.Name.String() // {PackagePath.Name}
 }
 
 // apiGroupForType looks up apiGroup for the given type
-func apiGroupForType(t *types.Type, apiGroups map[string]string) string {
-	return apiGroups[t.Name.Package]
+func apiGroupForType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) string {
+	t = tryDereference(t)
+
+	v := typePkgMap[t]
+	if v == nil {
+		klog.Warningf("WARNING: cannot read apiVersion for %s from type=>pkg map", t.Name.String())
+		return "<UNKNOWN_API_GROUP>"
+	}
+
+	return v.identifier()
 }
 
 // anchorIDForLocalType returns the #anchor string for the local type
-func anchorIDForLocalType(t *types.Type, apiGroups map[string]string) string {
-	return fmt.Sprintf("%s.%s", apiGroupForType(t, apiGroups), t.Name.Name)
+func anchorIDForLocalType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) string {
+	return fmt.Sprintf("%s.%s", apiGroupForType(t, typePkgMap), t.Name.Name)
 }
 
 // linkForType returns an anchor to the type if it can be generated. returns
 // empty string if it is not a local type or unrecognized external type.
-func linkForType(t *types.Type, c generatorConfig, apiGroups map[string]string) (string, error) {
-	if isLocalType(t) {
-		return "#" + anchorIDForLocalType(t, apiGroups), nil
+func linkForType(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*apiPackage) (string, error) {
+	t = tryDereference(t) // dereference kind=Pointer
+
+	if isLocalType(t, typePkgMap) {
+		return "#" + anchorIDForLocalType(t, typePkgMap), nil
 	}
 
 	var arrIndex = func(a []string, i int) string {
 		return a[(len(a)+i)%len(a)]
-	}
-
-	for t.Elem != nil { // dereference kind=Pointer
-		t = t.Elem
 	}
 
 	// types like k8s.io/apimachinery/pkg/apis/meta/v1.ObjectMeta,
@@ -368,10 +412,18 @@ func linkForType(t *types.Type, c generatorConfig, apiGroups map[string]string) 
 	return "", nil
 }
 
-func typeDisplayName(t *types.Type, c generatorConfig) string {
+// tryDereference returns the underlying type when t is a pointer, map, or slice.
+func tryDereference(t *types.Type) *types.Type {
+	if t.Elem != nil {
+		return t.Elem
+	}
+	return t
+}
+
+func typeDisplayName(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*apiPackage) string {
 	s := typeIdentifier(t)
-	if isLocalType(t) {
-		s = t.Name.Name
+	if isLocalType(t, typePkgMap) {
+		s = tryDereference(t).Name.Name
 	}
 	if t.Kind == types.Pointer {
 		s = strings.TrimLeft(s, "*")
@@ -434,16 +486,7 @@ func typeReferences(t *types.Type, c generatorConfig, references map[*types.Type
 	return out
 }
 
-func sortedTypes(typs map[string]*types.Type) []*types.Type {
-	var out []*types.Type
-	for _, t := range typs {
-		out = append(out, t)
-	}
-	sortTypes(out)
-	return out
-}
-
-func sortTypes(typs []*types.Type) {
+func sortTypes(typs []*types.Type) []*types.Type {
 	sort.Slice(typs, func(i, j int) bool {
 		t1, t2 := typs[i], typs[j]
 		if isExportedType(t1) && !isExportedType(t2) {
@@ -453,6 +496,7 @@ func sortTypes(typs []*types.Type) {
 		}
 		return t1.Name.Name < t2.Name.Name
 	})
+	return typs
 }
 
 func visibleTypes(in []*types.Type, c generatorConfig) []*types.Type {
@@ -465,9 +509,10 @@ func visibleTypes(in []*types.Type, c generatorConfig) []*types.Type {
 	return out
 }
 
-func packageDisplayName(pkg *types.Package) string {
-	if g := groupName(pkg); g != "" {
-		return g
+func packageDisplayName(pkg *types.Package, apiVersions map[string]string) string {
+	apiGroupVersion, ok := apiVersions[pkg.Path]
+	if ok {
+		return apiGroupVersion
 	}
 	return pkg.Path // go import path
 }
@@ -488,50 +533,70 @@ func isOptionalMember(m types.Member) bool {
 	return ok
 }
 
-func apiVersionMap(pkgs []*types.Package) (map[string]string, error) {
-	m := make(map[string]string)
-	for _, pkg := range pkgs {
-		group := groupName(pkg)
-		version := pkg.Name // assumes last part (i.e. v1 in core/v1) is apiVersion
-		r := `^v\d+((alpha|beta)\d+)?$`
-		if !regexp.MustCompile(r).MatchString(version) {
-			return nil, errors.Errorf("cannot infer api version from package path %s (%q doesn't match %s)", pkg.Path, version, r)
-		}
-
-		m[pkg.Path] = fmt.Sprintf("%s/%s", group, version)
+func apiVersionForPackage(pkg *types.Package) (string, string, error) {
+	group := groupName(pkg)
+	version := pkg.Name // assumes basename (i.e. "v1" in "core/v1") is apiVersion
+	r := `^v\d+((alpha|beta)\d+)?$`
+	if !regexp.MustCompile(r).MatchString(version) {
+		return "", "", errors.Errorf("cannot infer kubernetes apiVersion of go package %s (basename %q doesn't match expected pattern %s that's used to determine apiVersion)", pkg.Path, version, r)
 	}
-	return m, nil
+	return group, version, nil
 }
 
-func render(w io.Writer, pkgs []*types.Package, config generatorConfig) error {
-	references := findTypeReferences(pkgs)
-
-	apiVersions, err := apiVersionMap(pkgs)
-	if err != nil {
-		return errors.Wrap(err, "failed to infer apiVersions")
+// extractTypeToPackageMap creates a *types.Type map to apiPackage
+func extractTypeToPackageMap(pkgs []*apiPackage) map[*types.Type]*apiPackage {
+	out := make(map[*types.Type]*apiPackage)
+	for _, ap := range pkgs {
+		for _, t := range ap.Types {
+			out[t] = ap
+		}
 	}
+	return out
+}
+
+// packageMapToList flattens the map.
+func packageMapToList(pkgs map[string]*apiPackage) []*apiPackage {
+	// TODO(ahmetb): we should probably not deal with maps, this type can be
+	// a list everywhere.
+	out := make([]*apiPackage, 0, len(pkgs))
+	for _, v := range pkgs {
+		out = append(out, v)
+	}
+	return out
+}
+
+func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
+	references := findTypeReferences(pkgs)
+	typePkgMap := extractTypeToPackageMap(pkgs)
 
 	t, err := template.New("").Funcs(map[string]interface{}{
 		"isExportedType":     isExportedType,
 		"fieldName":          fieldName,
 		"fieldEmbedded":      fieldEmbedded,
 		"typeIdentifier":     func(t *types.Type) string { return typeIdentifier(t) },
-		"typeDisplayName":    func(t *types.Type) string { return typeDisplayName(t, config) },
+		"typeDisplayName":    func(t *types.Type) string { return typeDisplayName(t, config, typePkgMap) },
 		"visibleTypes":       func(t []*types.Type) []*types.Type { return visibleTypes(t, config) },
 		"renderComments":     func(s []string) string { return renderComments(s, !config.MarkdownDisabled) },
-		"packageDisplayName": packageDisplayName,
-		"apiGroup":           func(t *types.Type) string { return apiVersions[t.Name.Package] },
+		"packageDisplayName": func(p *apiPackage) string { return p.identifier() },
+		"apiGroup":           func(t *types.Type) string { return apiGroupForType(t, typePkgMap) },
+		"packageAnchorID": func(p *apiPackage) string {
+			// TODO(ahmetb): currently this is the same as packageDisplayName
+			// func, and it's fine since it retuns valid DOM id strings like
+			// 'serving.knative.dev/v1alpha1' which is valid per HTML5, except
+			// spaces, so just trim those.
+			return strings.Replace(p.identifier(), " ", "", -1)
+		},
 		"linkForType": func(t *types.Type) string {
-			v, err := linkForType(t, config, apiVersions)
+			v, err := linkForType(t, config, typePkgMap)
 			if err != nil {
 				klog.Fatal(errors.Wrapf(err, "error getting link for type=%s", t.Name))
 				return ""
 			}
 			return v
 		},
-		"anchorIDForType":  func(t *types.Type) string { return anchorIDForLocalType(t, apiVersions) },
+		"anchorIDForType":  func(t *types.Type) string { return anchorIDForLocalType(t, typePkgMap) },
 		"safe":             safe,
-		"sortedTypes":      sortedTypes,
+		"sortedTypes":      sortTypes,
 		"typeReferences":   func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
 		"hiddenMember":     func(m types.Member) bool { return hiddenMember(m, config) },
 		"isLocalType":      isLocalType,
