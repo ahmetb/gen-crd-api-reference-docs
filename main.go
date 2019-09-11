@@ -358,7 +358,8 @@ func apiGroupForType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) stri
 
 // anchorIDForLocalType returns the #anchor string for the local type
 func anchorIDForLocalType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) string {
-	return fmt.Sprintf("%s.%s", apiGroupForType(t, typePkgMap), t.Name.Name)
+	anchorID := strings.ReplaceAll(apiGroupForType(t, typePkgMap), "/", ".")
+	return fmt.Sprintf("%s.%s", anchorID, t.Name.Name)
 }
 
 // linkForType returns an anchor to the type if it can be generated. returns
@@ -584,7 +585,8 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 			// func, and it's fine since it retuns valid DOM id strings like
 			// 'serving.knative.dev/v1alpha1' which is valid per HTML5, except
 			// spaces, so just trim those.
-			return strings.Replace(p.identifier(), " ", "", -1)
+			str := strings.ReplaceAll(p.identifier(), " ", "")
+			return strings.ReplaceAll(str, "/", ".")
 		},
 		"linkForType": func(t *types.Type) string {
 			v, err := linkForType(t, config, typePkgMap)
