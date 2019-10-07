@@ -10,6 +10,7 @@ API Reference Docs [like this][ar] this tool is for you.
 - [**Knative** API reference docs](https://www.knative.dev/docs/reference/)
 - [**Kubeflow** API reference docs](https://www.kubeflow.org/docs/reference/overview/)
 - [**Agones** API reference docs](https://agones.dev/site/docs/reference/agones_crd_api_reference/)
+- [**Gardener** API reference docs](https://gardener.cloud/api-reference/)
 - _[[ADD YOUR PROJECT HERE]]_
 
 ## Why
