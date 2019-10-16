@@ -44,6 +44,9 @@ type generatorConfig struct {
 	// output.
 	HideTypePatterns []string `json:"hideTypePatterns"`
 
+	// Dirs the list of additional directories to include
+	Dirs []string `json:"dirs"`
+
 	// ExternalPackages lists recognized external package references and how to
 	// link to them.
 	ExternalPackages []externalPackage `json:"externalPackages"`
@@ -121,7 +124,7 @@ func main() {
 	}
 
 	klog.Infof("parsing go packages in directory %s", *flAPIDir)
-	pkgs, err := parseAPIPackages(*flAPIDir)
+	pkgs, err := parseAPIPackages(*flAPIDir, config)
 	if err != nil {
 		klog.Fatal(err)
 	}
@@ -191,12 +194,32 @@ func groupName(pkg *types.Package) string {
 	return ""
 }
 
-func parseAPIPackages(dir string) ([]*types.Package, error) {
+// apiVersionComment extracts the "//+apiVersion" meta-comment from the specified
+// package's godoc, or returns empty string if it cannot be found.
+func apiVersionComment(pkg *types.Package) string {
+	m := types.ExtractCommentTags("+", pkg.DocComments)
+	v := m["apiVersion"]
+	if len(v) == 1 {
+		return v[0]
+	}
+	return ""
+}
+
+func parseAPIPackages(dir string, config generatorConfig) ([]*types.Package, error) {
 	b := parser.New()
+
+	for _, dir := range config.Dirs {
+		// the following will silently fail (turn on -v=4 to see logs)
+		if err := b.AddDirRecursive(dir); err != nil {
+			return nil, err
+		}
+
+	}
 	// the following will silently fail (turn on -v=4 to see logs)
 	if err := b.AddDirRecursive(*flAPIDir); err != nil {
 		return nil, err
 	}
+
 	scan, err := b.FindTypes()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse pkgs and types")
@@ -288,7 +311,7 @@ func findTypeReferences(pkgs []*apiPackage) map[*types.Type][]*types.Type {
 func isExportedType(t *types.Type) bool {
 	// TODO(ahmetb) use types.ExtractSingleBoolCommentTag() to parse +genclient
 	// https://godoc.org/k8s.io/gengo/types#ExtractCommentTags
-	return strings.Contains(strings.Join(t.SecondClosestCommentLines, "\n"), "+genclient")
+	return strings.Contains(strings.Join(t.SecondClosestCommentLines, "\n"), "+genclient") || strings.Contains(strings.Join(t.SecondClosestCommentLines, "\n"), "+exported")
 }
 
 func fieldName(m types.Member) string {
@@ -538,6 +561,11 @@ func apiVersionForPackage(pkg *types.Package) (string, string, error) {
 	version := pkg.Name // assumes basename (i.e. "v1" in "core/v1") is apiVersion
 	r := `^v\d+((alpha|beta)\d+)?$`
 	if !regexp.MustCompile(r).MatchString(version) {
+		// lets see if there's a doc comment
+		version = apiVersionComment(pkg)
+		if version != "" {
+			return group, version, nil
+		}
 		return "", "", errors.Errorf("cannot infer kubernetes apiVersion of go package %s (basename %q doesn't match expected pattern %s that's used to determine apiVersion)", pkg.Path, version, r)
 	}
 	return group, version, nil
