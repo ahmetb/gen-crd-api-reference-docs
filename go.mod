@@ -1,4 +1,4 @@
-module github.com/ahmetb/gen-crd-api-reference-docs
+module github.com/jenkins-x/gen-crd-api-reference-docs
 
 require (
 	github.com/pkg/errors v0.8.1
