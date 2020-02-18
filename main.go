@@ -146,7 +146,7 @@ func main() {
 		}
 
 		// remove trailing whitespace from each html line for markdown renderers
-		s := regexp.MustCompile(`(?m)^\s+`).ReplaceAllString(b.String(), "")
+		s := regexp.MustCompile(`(?m)^\s+$`).ReplaceAllString(b.String(), "")
 		return s, nil
 	}
 
