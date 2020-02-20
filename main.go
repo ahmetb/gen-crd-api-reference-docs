@@ -20,6 +20,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Masterminds/sprig/v3"
 	"github.com/pkg/errors"
 	"github.com/russross/blackfriday/v2"
 	"k8s.io/gengo/parser"
@@ -582,7 +583,8 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 	references := findTypeReferences(pkgs)
 	typePkgMap := extractTypeToPackageMap(pkgs)
 
-	t, err := template.New("").Funcs(map[string]interface{}{
+	funcs := sprig.HtmlFuncMap()
+	funcsLocal := map[string]interface{}{
 		"isExportedType":     isExportedType,
 		"fieldName":          fieldName,
 		"fieldEmbedded":      fieldEmbedded,
@@ -609,12 +611,19 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		},
 		"anchorIDForType":  func(t *types.Type) string { return anchorIDForLocalType(t, typePkgMap) },
 		"safe":             safe,
+		"fromHTML":         func(h template.HTML) string { return string(h) },
+		"toHTML":           func(s string) template.HTML { return template.HTML(s) },
 		"sortedTypes":      sortTypes,
 		"typeReferences":   func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
 		"hiddenMember":     func(m types.Member) bool { return hiddenMember(m, config) },
 		"isLocalType":      isLocalType,
 		"isOptionalMember": isOptionalMember,
-	}).ParseGlob(filepath.Join(*flTemplateDir, "*.tpl"))
+	}
+
+	for k, v := range funcsLocal {
+		funcs[k] = v
+	}
+	t, err := template.New("").Funcs(funcs).ParseGlob(filepath.Join(*flTemplateDir, "*.tpl"))
 	if err != nil {
 		return errors.Wrap(err, "parse error")
 	}
