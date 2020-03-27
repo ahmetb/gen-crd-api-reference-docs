@@ -185,9 +185,9 @@ func main() {
 }
 
 // groupName extracts the "//+groupName" meta-comment from the specified
-// package's godoc, or returns empty string if it cannot be found.
+// package's comments, or returns empty string if it cannot be found.
 func groupName(pkg *types.Package) string {
-	m := types.ExtractCommentTags("+", pkg.DocComments)
+	m := types.ExtractCommentTags("+", pkg.Comments)
 	v := m["groupName"]
 	if len(v) == 1 {
 		return v[0]
