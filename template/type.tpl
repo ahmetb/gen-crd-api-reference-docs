@@ -17,10 +17,33 @@
     </p>
 {{ end }}
 
-
 <p>
     {{ safe (renderComments .CommentLines) }}
 </p>
+
+{{ with (constantsOfType .) }}
+<table>
+    <thead>
+        <tr>
+            <th>Value</th>
+            <th>Description</th>
+        </tr>
+    </thead>
+    <tbody>
+      {{- range . -}}
+      <tr>
+        {{- /*
+            renderComments implicitly creates a <p> element, so we
+            add one to the display name as well to make the contents
+            of the two cells align evenly.
+        */ -}}
+        <td><p>{{ typeDisplayName . }}</p></td>
+        <td>{{ safe (renderComments .CommentLines) }}</td>
+      </tr>
+      {{- end -}}
+    </tbody>
+</table>
+{{ end }}
 
 {{ if .Members }}
 <table>
