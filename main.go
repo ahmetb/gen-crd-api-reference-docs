@@ -245,6 +245,7 @@ func containsString(sl []string, str string) bool {
 // offer, and combines the types in them.
 func combineAPIPackages(pkgs []*types.Package) ([]*apiPackage, error) {
 	pkgMap := make(map[string]*apiPackage)
+	var pkgIds []string
 
 	for _, pkg := range pkgs {
 		apiGroup, apiVersion, err := apiVersionForPackage(pkg)
@@ -266,14 +267,18 @@ func combineAPIPackages(pkgs []*types.Package) ([]*apiPackage, error) {
 				Types:      typeList,
 				GoPackages: []*types.Package{pkg},
 			}
+			pkgIds = append(pkgIds, id)
 		} else {
 			v.Types = append(v.Types, typeList...)
 			v.GoPackages = append(v.GoPackages, pkg)
 		}
 	}
+
+	sort.Sort(sort.StringSlice(pkgIds))
+
 	out := make([]*apiPackage, 0, len(pkgMap))
-	for _, v := range pkgMap {
-		out = append(out, v)
+	for _, id := range pkgIds {
+		out = append(out, pkgMap[id])
 	}
 	return out, nil
 }
