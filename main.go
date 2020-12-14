@@ -58,6 +58,9 @@ type generatorConfig struct {
 
 	// MarkdownDisabled controls markdown rendering for comment lines.
 	MarkdownDisabled bool `json:"markdownDisabled"`
+
+	// PreserveTrailingWhitespace controls retention of trailing whitespace in the rendered document.
+	PreserveTrailingWhitespace bool `json:"preserveTrailingWhitespace"`
 }
 
 type externalPackage struct {
@@ -143,6 +146,10 @@ func main() {
 		err := render(&b, apiPackages, config)
 		if err != nil {
 			return "", errors.Wrap(err, "failed to render the result")
+		}
+
+		if config.PreserveTrailingWhitespace {
+			return b.String(), nil
 		}
 
 		// remove trailing whitespace from each html line for markdown renderers
@@ -619,6 +626,7 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		"hiddenMember":     func(m types.Member) bool { return hiddenMember(m, config) },
 		"isLocalType":      isLocalType,
 		"isOptionalMember": isOptionalMember,
+		"safeIdentifier":   func(s string) string { return regexp.MustCompile("[[:punct:]]+").ReplaceAllLiteralString(s, "-") },
 	}).ParseGlob(filepath.Join(*flTemplateDir, "*.tpl"))
 	if err != nil {
 		return errors.Wrap(err, "parse error")
