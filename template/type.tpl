@@ -10,7 +10,7 @@
         {{- $prev := "" -}}
         {{- range . -}}
             {{- if $prev -}}, {{ end -}}
-            {{ $prev = . }}
+            {{- $prev = . -}}
             <a href="{{ linkForType . }}">{{ typeDisplayName . }}</a>
         {{- end -}}
         )
