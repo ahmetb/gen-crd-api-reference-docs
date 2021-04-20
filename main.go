@@ -59,6 +59,9 @@ type generatorConfig struct {
 
 	// MarkdownDisabled controls markdown rendering for comment lines.
 	MarkdownDisabled bool `json:"markdownDisabled"`
+
+	// GitCommitDisabled causes the git commit information to be excluded from the output.
+	GitCommitDisabled bool `json:"gitCommitDisabled"`
 }
 
 type externalPackage struct {
@@ -685,7 +688,11 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		return errors.Wrap(err, "parse error")
 	}
 
-	gitCommit, _ := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
+	var gitCommit []byte
+	if !config.GitCommitDisabled {
+		gitCommit, _ = exec.Command("git", "rev-parse", "--short", "HEAD").Output()
+	}
+
 	return errors.Wrap(t.ExecuteTemplate(w, "packages", map[string]interface{}{
 		"packages":  pkgs,
 		"config":    config,
