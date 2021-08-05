@@ -57,7 +57,7 @@ Capabilities of this tool include:
 1. Clone this repository.
 
 2. Make sure you have go1.11+ instaled. Then run `go build`, you should get a
-   `refdocs` binary executable.
+   `gen-crd-api-reference-docs` binary executable in the current directory.
 
 3. Clone a Knative repository, set GOPATH correctly,
    and call the compiled binary within that directory.
@@ -67,7 +67,7 @@ Capabilities of this tool include:
     # goclone(1) to have a separate GOPATH for each repo I clone.)
     $ goclone knative/build
 
-    $ /path/to/refdocs \
+    $ /path/to/gen-crd-api-reference-docs \
         -config "/path/to/example-config.json" \
         -api-dir "github.com/knative/build/pkg/apis/build/v1alpha1" \
         -out-file docs.html
