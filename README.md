@@ -7,7 +7,7 @@ API Reference Docs [like this][ar] this tool is for you.
 
 ## Current Users
 
-- [**Knative** API reference docs](https://www.knative.dev/docs/reference/)
+- [**Knative** API reference docs](https://knative.dev/docs/reference/api/serving-api/)
 - [**Kubeflow** API reference docs](https://www.kubeflow.org/docs/reference/overview/)
 - [**Agones** API reference docs](https://agones.dev/site/docs/reference/agones_crd_api_reference/)
 - [**cert-manager** API reference docs](https://cert-manager.io/docs/reference/api-docs/)
