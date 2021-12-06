@@ -16,3 +16,6 @@ refdocs
 dist
 
 vendor
+
+.idea
+.DS_Store

@@ -9,12 +9,12 @@ builds:
       - darwin
     goarch:
       - amd64
-archive:
-  name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
-  files:
-    - LICENSE
-    - template/**
-    - example-config.json
+archives:
+  - name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - template/**
+      - example-config.json
 checksum:
   name_template: "checksums.txt"
 changelog:

@@ -21,6 +21,9 @@ import (
 	"time"
 	"unicode"
 
+	"go.crdhub.dev/gen-crd-api-reference-docs/templates"
+
+	"github.com/Masterminds/sprig/v3"
 	"github.com/pkg/errors"
 	"github.com/russross/blackfriday/v2"
 	"k8s.io/gengo/parser"
@@ -29,9 +32,8 @@ import (
 )
 
 var (
-	flConfig      = flag.String("config", "", "path to config file")
-	flAPIDir      = flag.String("api-dir", "", "api directory (or import path), point this to pkg/apis")
-	flTemplateDir = flag.String("template-dir", "template", "path to template/ dir")
+	flConfig = flag.String("config", "", "path to config file")
+	flAPIDir = flag.String("api-dir", "", "api directory (or import path), point this to pkg/apis")
 
 	flHTTPAddr = flag.String("http-addr", "", "start an HTTP server on specified addr to view the result (e.g. :8080)")
 	flOutFile  = flag.String("out-file", "", "path to output file to save the result")
@@ -96,23 +98,7 @@ func init() {
 	if *flHTTPAddr != "" && *flOutFile != "" {
 		panic("only -out-file or -http-addr can be specified")
 	}
-	if err := resolveTemplateDir(*flTemplateDir); err != nil {
-		panic(err)
-	}
 
-}
-
-func resolveTemplateDir(dir string) error {
-	path, err := filepath.Abs(dir)
-	if err != nil {
-		return err
-	}
-	if fi, err := os.Stat(path); err != nil {
-		return errors.Wrapf(err, "cannot read the %s directory", path)
-	} else if !fi.IsDir() {
-		return errors.Errorf("%s path is not a directory", path)
-	}
-	return nil
 }
 
 func main() {
@@ -422,7 +408,7 @@ func linkForType(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*a
 				return "", errors.Wrapf(err, "pattern %q failed to compile", v.TypeMatchPrefix)
 			}
 			if r.MatchString(id) {
-				tpl, err := texttemplate.New("").Funcs(map[string]interface{}{
+				tpl, err := texttemplate.New("").Funcs(sprig.TxtFuncMap()).Funcs(map[string]interface{}{
 					"lower":    strings.ToLower,
 					"arrIndex": arrIndex,
 				}).Parse(v.DocsURLTemplate)
@@ -652,7 +638,7 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 	references := findTypeReferences(pkgs)
 	typePkgMap := extractTypeToPackageMap(pkgs)
 
-	t, err := template.New("").Funcs(map[string]interface{}{
+	t, err := template.New("").Funcs(sprig.HtmlFuncMap()).Funcs(map[string]interface{}{
 		"isExportedType":     isExportedType,
 		"fieldName":          fieldName,
 		"fieldEmbedded":      fieldEmbedded,
@@ -685,7 +671,7 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		"isLocalType":      isLocalType,
 		"isOptionalMember": isOptionalMember,
 		"constantsOfType":  func(t *types.Type) []*types.Type { return constantsOfType(t, typePkgMap[t]) },
-	}).ParseGlob(filepath.Join(*flTemplateDir, "*.tpl"))
+	}).ParseFS(templates.FS(), "*.tpl")
 	if err != nil {
 		return errors.Wrap(err, "parse error")
 	}
