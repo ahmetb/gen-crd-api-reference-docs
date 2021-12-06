@@ -5,7 +5,7 @@ go 1.17
 require (
 	github.com/Masterminds/sprig/v3 v3.2.2
 	github.com/pkg/errors v0.9.1
-	github.com/russross/blackfriday/v2 v2.1.0
+	github.com/yuin/goldmark v1.1.27
 	k8s.io/gengo v0.0.0-20211129171323-c02415ce4185
 	k8s.io/klog/v2 v2.30.0
 )
