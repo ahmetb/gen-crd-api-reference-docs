@@ -6,7 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"html/template"
-	"io"
+	"io/fs"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 	texttemplate "text/template"
-	"time"
 	"unicode"
 
 	"go.crdhub.dev/gen-crd-api-reference-docs/templates"
@@ -26,6 +25,7 @@ import (
 	"github.com/Masterminds/sprig/v3"
 	"github.com/pkg/errors"
 	"github.com/yuin/goldmark"
+	"gomodules.xyz/memfs"
 	"k8s.io/gengo/parser"
 	"k8s.io/gengo/types"
 	"k8s.io/klog/v2"
@@ -36,11 +36,11 @@ var (
 	flAPIDir = flag.String("api-dir", "", "api directory (or import path), point this to pkg/apis")
 
 	flHTTPAddr = flag.String("http-addr", "", "start an HTTP server on specified addr to view the result (e.g. :8080)")
-	flOutFile  = flag.String("out-file", "", "path to output file to save the result")
+	flOutDir   = flag.String("out-dir", "", "path to output directory to save the result")
 )
 
 const (
-	docCommentForceIncludes = "// +gencrdrefdocs:force"
+	docCommentForceIncludes = "+gencrdrefdocs:force"
 )
 
 type generatorConfig struct {
@@ -92,13 +92,12 @@ func init() {
 	if *flAPIDir == "" {
 		panic("-api-dir not specified")
 	}
-	if *flHTTPAddr == "" && *flOutFile == "" {
-		panic("-out-file or -http-addr must be specified")
+	if *flHTTPAddr == "" && *flOutDir == "" {
+		panic("-out-dir or -http-addr must be specified")
 	}
-	if *flHTTPAddr != "" && *flOutFile != "" {
-		panic("only -out-file or -http-addr can be specified")
+	if *flHTTPAddr != "" && *flOutDir != "" {
+		panic("only -out-dir or -http-addr can be specified")
 	}
-
 }
 
 func main() {
@@ -129,47 +128,40 @@ func main() {
 		klog.Fatal(err)
 	}
 
-	mkOutput := func() (string, error) {
-		var b bytes.Buffer
-		err := render(&b, apiPackages, config)
-		if err != nil {
-			return "", errors.Wrap(err, "failed to render the result")
-		}
-
-		// remove trailing whitespace from each html line for markdown renderers
-		s := regexp.MustCompile(`(?m)^\s+`).ReplaceAllString(b.String(), "")
-		return s, nil
+	fsys, err := render(apiPackages, config)
+	if err != nil {
+		klog.Fatalf("failed to create fs: %v", err)
 	}
 
-	if *flOutFile != "" {
-		dir := filepath.Dir(*flOutFile)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			klog.Fatalf("failed to create dir %s: %v", dir, err)
+	if *flOutDir != "" {
+		// dir := filepath.Dir(*flOutDir)
+		if err := os.MkdirAll(*flOutDir, 0755); err != nil {
+			klog.Fatalf("failed to create dir %s: %v", *flOutDir, err)
 		}
-		s, err := mkOutput()
+
+		err = fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			data, err := fs.ReadFile(fsys, path)
+			if err != nil {
+				return err
+			}
+			f := filepath.Join(*flOutDir, path)
+			dir := filepath.Dir(f)
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return fmt.Errorf("failed create dir %s, reason: %v", dir, err)
+			}
+			return ioutil.WriteFile(f, data, 0644)
+		})
 		if err != nil {
-			klog.Fatalf("failed: %+v", err)
-		}
-		if err := ioutil.WriteFile(*flOutFile, []byte(s), 0644); err != nil {
 			klog.Fatalf("failed to write to out file: %v", err)
 		}
-		klog.Infof("written to %s", *flOutFile)
+		klog.Infof("written to %s", *flOutDir)
 	}
 
 	if *flHTTPAddr != "" {
-		h := func(w http.ResponseWriter, r *http.Request) {
-			now := time.Now()
-			defer func() { klog.Infof("request took %v", time.Since(now)) }()
-			s, err := mkOutput()
-			if err != nil {
-				fmt.Fprintf(w, "error: %+v", err)
-				klog.Warningf("failed: %+v", err)
-			}
-			if _, err := fmt.Fprint(w, s); err != nil {
-				klog.Warningf("response write error: %v", err)
-			}
-		}
-		http.HandleFunc("/", h)
+		http.Handle("/", http.FileServer(http.FS(fsys)))
 		klog.Infof("server listening at %s", *flHTTPAddr)
 		klog.Fatal(http.ListenAndServe(*flHTTPAddr, nil))
 	}
@@ -209,7 +201,9 @@ func parseAPIPackages(dir string) ([]*types.Package, error) {
 			continue
 		}
 
-		if groupName(pkg) != "" && len(pkg.Types) > 0 || containsString(pkg.DocComments, docCommentForceIncludes) {
+		b1 := groupName(pkg) != "" && len(pkg.Types) > 0
+		b2 := containsString(pkg.DocComments, docCommentForceIncludes)
+		if b1 || b2 {
 			klog.V(3).Infof("package=%v has groupName and has types", p)
 			pkgNames = append(pkgNames, p)
 		}
@@ -225,7 +219,7 @@ func parseAPIPackages(dir string) ([]*types.Package, error) {
 
 func containsString(sl []string, str string) bool {
 	for _, s := range sl {
-		if str == s {
+		if strings.Contains(s, str) {
 			return true
 		}
 	}
@@ -249,6 +243,12 @@ func combineAPIPackages(pkgs []*types.Package) ([]*apiPackage, error) {
 	}
 
 	for _, pkg := range pkgs {
+		if internal, err := isInternal(pkg); err != nil {
+			return nil, err
+		} else if internal {
+			continue
+		}
+
 		apiGroup, apiVersion, err := apiVersionForPackage(pkg)
 		if err != nil {
 			return nil, errors.Wrapf(err, "could not get apiVersion for package %s", pkg.Path)
@@ -306,10 +306,54 @@ func findTypeReferences(pkgs []*apiPackage) map[*types.Type][]*types.Type {
 	return m
 }
 
+func findResourceTypeReferences(pkgs []*apiPackage, c generatorConfig) map[*types.Type][]*types.Type {
+	m := make(map[*types.Type][]*types.Type)
+	for _, pkg := range pkgs {
+		for _, typ := range resourceTypes(pkg, c) {
+			visitMembers(typ, typ, m)
+		}
+	}
+	return m
+}
+
+func visitMembers(typ, root *types.Type, m map[*types.Type][]*types.Type) {
+	addToFront := func(arr []*types.Type, element *types.Type) ([]*types.Type, bool) {
+		for _, t := range arr {
+			if t == element {
+				return arr, true
+			}
+		}
+		return append([]*types.Type{element}, arr...), false
+	}
+
+	var exists bool
+	for _, member := range typ.Members {
+		t := member.Type
+		t = tryDereference(t)
+		// handle recursive types
+		m[t], exists = addToFront(m[t], root)
+		if !exists {
+			visitMembers(t, root, m)
+		}
+	}
+}
+
 func isExportedType(t *types.Type) bool {
 	// TODO(ahmetb) use types.ExtractSingleBoolCommentTag() to parse +genclient
 	// https://godoc.org/k8s.io/gengo/types#ExtractCommentTags
-	return strings.Contains(strings.Join(t.SecondClosestCommentLines, "\n"), "+genclient")
+
+	comments := append([]string{}, t.CommentLines...)
+	comments = append(comments, t.SecondClosestCommentLines...)
+	tags := types.ExtractCommentTags("+", comments)
+
+	v1, _ := tags["genclient"]
+	v2, _ := tags["kubebuilder:object:root"]
+	v3, _ := tags["k8s:deepcopy-gen:interfaces"]
+
+	result := (len(v1) == 1 && v1[0] == "") ||
+		(len(v2) == 1 && v2[0] == "true") ||
+		(len(v3) == 1 && v3[0] == "k8s.io/apimachinery/pkg/runtime.Object")
+	return t.Kind == types.Struct && result
 }
 
 func fieldName(m types.Member) string {
@@ -330,6 +374,12 @@ func isLocalType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) bool {
 	t = tryDereference(t)
 	_, ok := typePkgMap[t]
 	return ok
+}
+
+func isPackageType(t *types.Type, p *apiPackage, typePkgMap map[*types.Type]*apiPackage) bool {
+	t = tryDereference(t)
+	v, ok := typePkgMap[t]
+	return ok && v == p
 }
 
 func renderComments(s []string, markdown bool) (string, error) {
@@ -561,6 +611,68 @@ func visibleTypes(in []*types.Type, c generatorConfig) []*types.Type {
 	return out
 }
 
+func resourceTypes(p *apiPackage, config generatorConfig) []*types.Type {
+	var out []*types.Type
+	for _, t := range p.Types {
+		if !hideType(t, config) && isExportedType(t) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func sharedTypes(p *apiPackage, config generatorConfig, typeResourceMap map[*types.Type][]*types.Type, typePkgMap map[*types.Type]*apiPackage) []*types.Type {
+	// if no api types are found, then this package is used purely for shared types
+	rts := resourceTypes(p, config)
+	if len(rts) == 0 {
+		return p.Types
+	}
+
+	var out []*types.Type
+	for _, t := range p.Types {
+		// not used by any package
+		score := 0
+		resources := typeResourceMap[t]
+		for _, res := range resources {
+			if isPackageType(res, p, typePkgMap) {
+				score += 1 // if used by more than one exported type in this api package
+			}
+		}
+		if score > 1 {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func childTypes(root *types.Type, typeResourceMap map[*types.Type][]*types.Type, typePkgMap map[*types.Type]*apiPackage) ([]*types.Type, error) {
+	p, ok := typePkgMap[root]
+	if !ok {
+		return nil, fmt.Errorf("childTypes called for external type %s", root.Name.String())
+	}
+
+	var out []*types.Type
+	for k, v := range typeResourceMap {
+		if !isPackageType(k, p, typePkgMap) {
+			continue
+		}
+
+		// if used by only one exported type in this api package
+		score := 0
+		var r *types.Type
+		for idx, res := range v {
+			if isPackageType(res, p, typePkgMap) {
+				score += 1
+				r = v[idx]
+			}
+		}
+		if score == 1 && r == root {
+			out = append(out, k)
+		}
+	}
+	return out, nil
+}
+
 func packageDisplayName(pkg *types.Package, apiVersions map[string]string) string {
 	apiGroupVersion, ok := apiVersions[pkg.Path]
 	if ok {
@@ -593,6 +705,19 @@ func apiVersionForPackage(pkg *types.Package) (string, string, error) {
 		return "", "", errors.Errorf("cannot infer kubernetes apiVersion of go package %s (basename %q doesn't match expected pattern %s that's used to determine apiVersion)", pkg.Path, version, r)
 	}
 	return group, version, nil
+}
+
+// isInternal determines whether the given package
+// contains the internal types or not
+func isInternal(p *types.Package) (bool, error) {
+	for _, t := range p.Types {
+		for _, member := range t.Members {
+			if member.Name == "TypeMeta" {
+				return !strings.Contains(member.Tags, "json"), nil
+			}
+		}
+	}
+	return false, fmt.Errorf("unable to find TypeMeta for any types in package %s", p.Path)
 }
 
 // extractTypeToPackageMap creates a *types.Type map to apiPackage
@@ -636,8 +761,9 @@ func constantsOfType(t *types.Type, pkg *apiPackage) []*types.Type {
 	return sortTypes(constants)
 }
 
-func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
+func render(pkgs []*apiPackage, config generatorConfig) (fs.FS, error) {
 	references := findTypeReferences(pkgs)
+	typeResourceMap := findResourceTypeReferences(pkgs, config)
 	typePkgMap := extractTypeToPackageMap(pkgs)
 
 	t, err := template.New("").Funcs(sprig.HtmlFuncMap()).Funcs(map[string]interface{}{
@@ -673,9 +799,12 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		"isLocalType":      isLocalType,
 		"isOptionalMember": isOptionalMember,
 		"constantsOfType":  func(t *types.Type) []*types.Type { return constantsOfType(t, typePkgMap[t]) },
+
+		"sharedTypes": func(p *apiPackage) []*types.Type { return sharedTypes(p, config, typeResourceMap, typePkgMap) },
+		"childTypes":  func(t *types.Type) ([]*types.Type, error) { return childTypes(t, typeResourceMap, typePkgMap) },
 	}).ParseFS(templates.FS(), "*.tpl")
 	if err != nil {
-		return errors.Wrap(err, "parse error")
+		return nil, errors.Wrap(err, "parse error")
 	}
 
 	var gitCommit []byte
@@ -683,9 +812,65 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		gitCommit, _ = exec.Command("git", "rev-parse", "--short", "HEAD").Output()
 	}
 
-	return errors.Wrap(t.ExecuteTemplate(w, "packages", map[string]interface{}{
-		"packages":  pkgs,
-		"config":    config,
-		"gitCommit": strings.TrimSpace(string(gitCommit)),
-	}), "template execution error")
+	rootFS := memfs.New()
+	for _, p := range pkgs {
+		{
+			var buf bytes.Buffer
+			err := t.ExecuteTemplate(&buf, "shared", map[string]interface{}{
+				"package":   p,
+				"config":    config,
+				"gitCommit": strings.TrimSpace(string(gitCommit)),
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to render package %s/%s, reason: %v", p.apiGroup, p.apiVersion, err)
+			}
+
+			// remove trailing whitespace from each html line for markdown renderers
+			s := regexp.MustCompile(`(?m)^\s+`).ReplaceAllString(buf.String(), "")
+
+			var f string
+			if p.apiGroup == "" {
+				f = filepath.Join(p.GoPackages[0].Path, "overview", "index.html")
+			} else {
+				f = filepath.Join(p.apiGroup, p.apiVersion, "overview", "index.html")
+			}
+			err = rootFS.MkdirAll(filepath.Dir(f), 0755)
+			if err != nil {
+				return nil, err
+			}
+			err = rootFS.WriteFile(f, []byte(s), 0755)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		for _, typ := range visibleTypes(p.Types, config) {
+			if isExportedType(typ) {
+				var buf bytes.Buffer
+				err := t.ExecuteTemplate(&buf, "resource", map[string]interface{}{
+					"package":   p,
+					"type":      typ,
+					"config":    config,
+					"gitCommit": strings.TrimSpace(string(gitCommit)),
+				})
+				if err != nil {
+					return nil, fmt.Errorf("failed to render package %s/%s, reason: %v", p.apiGroup, p.apiVersion, err)
+				}
+
+				// remove trailing whitespace from each html line for markdown renderers
+				s := regexp.MustCompile(`(?m)^\s+`).ReplaceAllString(buf.String(), "")
+
+				f := filepath.Join(p.apiGroup, p.apiVersion, strings.ToLower(typ.Name.Name), "index.html")
+				err = rootFS.MkdirAll(filepath.Dir(f), 0755)
+				if err != nil {
+					return nil, err
+				}
+				err = rootFS.WriteFile(f, []byte(s), 0755)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	return rootFS, nil
 }

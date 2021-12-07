@@ -1,5 +1,7 @@
 {{ define "members" }}
 
+{{ $export := isExportedType . }}
+
 {{ range .Members }}
 {{ if not (hiddenMember .)}}
 <tr>
@@ -31,9 +33,7 @@
     {{ if and (eq (.Type.Name.Name) "ObjectMeta") }}
         Refer to the Kubernetes API documentation for the fields of the
         <code>metadata</code> field.
-    {{ end }}
-
-    {{ if or (eq (fieldName .) "spec") }}
+    {{ else if $export }}
         <br/>
         <br/>
         <table>
