@@ -10,7 +10,7 @@ API Reference Docs [like this][ar] this tool is for you.
 - [**Knative** API reference docs](https://knative.dev/docs/reference/api/serving-api/)
 - [**Kubeflow** API reference docs](https://www.kubeflow.org/docs/reference/overview/)
 - [**cert-manager** API reference docs](https://cert-manager.io/docs/reference/api-docs/)
-- [**PlanetScale Vitess Operator** API reference docs(https://github.com/planetscale/vitess-operator/blob/main/docs/api.md)
+- [**PlanetScale Vitess Operator** API reference docs](https://github.com/planetscale/vitess-operator/blob/main/docs/api.md)
 - [**Agones** API reference docs](https://agones.dev/site/docs/reference/agones_crd_api_reference/)
 - [**Gardener** API reference docs](https://gardener.cloud/api-reference/)
 - [**New Relic Alert Manager** API reference docs](https://github.com/fpetkovski/newrelic-alert-manager/tree/master/docs)
