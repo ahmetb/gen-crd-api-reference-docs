@@ -8,8 +8,9 @@ API Reference Docs [like this][ar] this tool is for you.
 ## Current Users
 
 - [**Knative** API reference docs](https://knative.dev/docs/reference/api/serving-api/)
-- [**Kubeflow** API reference docs](https://www.kubeflow.org/docs/reference/overview/)
+- [**FluxCD** API reference docs]
 - [**Contour** ingress controller API reference docs](https://projectcontour.io/docs/v1.19.0/config/api/)
+- [**Kubeflow** API reference docs](https://www.kubeflow.org/docs/reference/overview/)
 - [**cert-manager** API reference docs](https://cert-manager.io/docs/reference/api-docs/)
 - [**PlanetScale Vitess Operator** API reference docs](https://github.com/planetscale/vitess-operator/blob/main/docs/api.md)
 - [**Agones** API reference docs](https://agones.dev/site/docs/reference/agones_crd_api_reference/)
