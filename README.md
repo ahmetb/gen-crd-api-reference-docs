@@ -8,7 +8,7 @@ API Reference Docs [like this][ar] this tool is for you.
 ## Current Users
 
 - [**Knative** API reference docs](https://knative.dev/docs/reference/api/serving-api/)
-- [**FluxCD** API reference docs]
+- [**FluxCD** API reference docs](https://fluxcd.io/docs/components/source/api/)
 - [**Contour** ingress controller API reference docs](https://projectcontour.io/docs/v1.19.0/config/api/)
 - [**Kubeflow** API reference docs](https://www.kubeflow.org/docs/reference/overview/)
 - [**cert-manager** API reference docs](https://cert-manager.io/docs/reference/api-docs/)
