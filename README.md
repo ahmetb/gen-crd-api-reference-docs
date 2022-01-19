@@ -12,6 +12,7 @@ API Reference Docs [like this][ar] this tool is for you.
 - [**Contour** ingress controller API reference docs](https://projectcontour.io/docs/v1.19.0/config/api/)
 - [**Kubeflow** API reference docs](https://www.kubeflow.org/docs/reference/overview/)
 - [**cert-manager** API reference docs](https://cert-manager.io/docs/reference/api-docs/)
+- [**Open Service Mesh** API reference docs](https://release-v0-11.docs.openservicemesh.io/docs/api_reference/config/v1alpha1/)
 - [**PlanetScale Vitess Operator** API reference docs](https://github.com/planetscale/vitess-operator/blob/main/docs/api.md)
 - [**Agones** API reference docs](https://agones.dev/site/docs/reference/agones_crd_api_reference/)
 - [**Gardener** API reference docs](https://gardener.cloud/api-reference/)
