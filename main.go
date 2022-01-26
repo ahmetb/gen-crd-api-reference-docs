@@ -362,8 +362,9 @@ func renderComments(s []string, markdown bool, asciiDoc bool) string {
 	}
 
 	if asciiDoc{
-		doc = strings.ReplaceAll(doc, "#", "\\#")    // avoid highlighting
-		doc = strings.ReplaceAll(doc, "{", "\\{")    // avoid interpretation as attribute
+		doc = strings.Replace(doc, "#", "\\#", strings.Count(doc, "#") - 1)    // avoid highlighting
+		non_attribute_re := regexp.MustCompile("{([^} ]+})")
+		doc = non_attribute_re.ReplaceAllString(doc, "\\{$1")    // avoid interpretation as attribute
 		doc = strings.ReplaceAll(doc, "|", "{vbar}") // avoid alternation interpreted as column separator
 	} else {
 		doc = nl2br(doc)
@@ -703,6 +704,7 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		"isLocalType":      func(t *types.Type) bool { return isLocalType(t, typePkgMap) },
 		"isOptionalMember": isOptionalMember,
 		"constantsOfType":  func(t *types.Type) []*types.Type { return constantsOfType(t, typePkgMap[t]) },
+		"asciiDocAttributeEscape": func(s string) string { return strings.ReplaceAll(s, "]", "\\]") },
 	}
 	var gitCommit []byte
 	if !config.GitCommitDisabled {
