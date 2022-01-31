@@ -408,7 +408,8 @@ func apiGroupForType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) stri
 
 // anchorIDForLocalType returns the #anchor string for the local type
 func anchorIDForLocalType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) string {
-	return sanitizeId(fmt.Sprintf("%s.%s", apiGroupForType(t, typePkgMap), t.Name.Name))
+	t = tryDereference(t)
+	return fmt.Sprintf("%s.%s", apiGroupForType(t, typePkgMap), t.Name.Name)
 }
 
 // linkForType returns an anchor to the type if it can be generated. returns
@@ -681,12 +682,12 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		"renderComments":     func(s []string) string { return renderComments(s, !config.MarkdownDisabled, config.AsciiDoc) },
 		"packageDisplayName": func(p *apiPackage) string { return p.identifier() },
 		"apiGroup":           func(t *types.Type) string { return apiGroupForType(t, typePkgMap) },
-		"packageAnchorID": func(p *apiPackage) string {
+		"packageAnchorID":    func(p *apiPackage) string {
 			// TODO(ahmetb): currently this is the same as packageDisplayName
 			// func, and it's fine since it retuns valid DOM id strings like
 			// 'serving.knative.dev/v1alpha1' which is valid per HTML5, except
 			// spaces, so just trim those.
-			return sanitizeId(p.identifier())
+			return strings.ReplaceAll(p.identifier(), " ", "")
 		},
 		"linkForType": func(t *types.Type) string {
 			v, err := linkForType(t, config, typePkgMap)
@@ -704,6 +705,7 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		"isLocalType":      func(t *types.Type) bool { return isLocalType(t, typePkgMap) },
 		"isOptionalMember": isOptionalMember,
 		"constantsOfType":  func(t *types.Type) []*types.Type { return constantsOfType(t, typePkgMap[t]) },
+		"sanitizeId":       sanitizeId,
 		"asciiDocAttributeEscape": func(s string) string { return strings.ReplaceAll(s, "]", "\\]") },
 	}
 	var gitCommit []byte
