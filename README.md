@@ -19,6 +19,7 @@ API Reference Docs [like this][ar] this tool is for you.
 - [**Gardener** API reference docs](https://gardener.cloud/api-reference/)
 - [**New Relic Alert Manager** API reference docs](https://github.com/fpetkovski/newrelic-alert-manager/tree/master/docs)
 - [**Antrea** API reference docs](https://antrea.io/docs/v1.3.0/docs/api-reference/)
+- [**kube-green** API reference docs](https://kube-green.dev/docs/apireference_v1alpha1/)
 - _[[ADD YOUR PROJECT HERE]]_
 
 ## Why
