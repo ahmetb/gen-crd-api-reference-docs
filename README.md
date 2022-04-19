@@ -63,7 +63,7 @@ Capabilities of this tool include:
 
 1. Clone this repository.
 
-2. Make sure you have go1.11+ instaled. Then run `go build`, you should get a
+2. Make sure you have go1.11+ installed. Then run `go build`, you should get a
    `gen-crd-api-reference-docs` binary executable in the current directory.
 
 3. Clone a Knative repository, set GOPATH correctly,
