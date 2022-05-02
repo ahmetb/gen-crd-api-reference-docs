@@ -38,7 +38,7 @@ var (
 )
 
 const (
-	docCommentForceIncludes = "// +gencrdrefdocs:force"
+	docCommentForceIncludes = "+gencrdrefdocs:force"
 )
 
 type generatorConfig struct {
