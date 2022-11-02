@@ -390,16 +390,28 @@ func apiGroupForType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) stri
 
 // anchorIDForLocalType returns the #anchor string for the local type
 func anchorIDForLocalType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) string {
-	return fmt.Sprintf("%s.%s", apiGroupForType(t, typePkgMap), t.Name.Name)
+	dt := tryDereferenceDeep(t)
+
+	return fmt.Sprintf("%s.%s", apiGroupForType(dt, typePkgMap), dt.Name.Name)
+}
+
+func formatIDForMD(s string) string {
+	replacer := strings.NewReplacer(".", "-", "/", "-")
+
+	return replacer.Replace(s)
 }
 
 // linkForType returns an anchor to the type if it can be generated. returns
 // empty string if it is not a local type or unrecognized external type.
-func linkForType(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*apiPackage) (string, error) {
+func linkForType(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*apiPackage, isMarkdown bool) (string, error) {
 	t = tryDereference(t) // dereference kind=Pointer
 
 	if isLocalType(t, typePkgMap) {
-		return "#" + anchorIDForLocalType(t, typePkgMap), nil
+		if isMarkdown {
+			return "#" + formatIDForMD(anchorIDForLocalType(t, typePkgMap)), nil
+		} else {
+			return "#" + anchorIDForLocalType(t, typePkgMap), nil
+		}
 	}
 
 	var arrIndex = func(a []string, i int) string {
@@ -450,6 +462,14 @@ func tryDereference(t *types.Type) *types.Type {
 		return t.Elem
 	}
 	return t
+}
+
+func tryDereferenceDeep(t *types.Type) *types.Type {
+	if t.Elem == nil {
+		return t
+	}
+
+	return tryDereferenceDeep(t.Elem)
 }
 
 // finalUnderlyingTypeOf walks the type hierarchy for t and returns
@@ -662,24 +682,36 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 			// func, and it's fine since it retuns valid DOM id strings like
 			// 'serving.knative.dev/v1alpha1' which is valid per HTML5, except
 			// spaces, so just trim those.
-			return strings.Replace(p.identifier(), " ", "", -1)
+			return strings.ReplaceAll(p.identifier(), " ", "")
+		},
+		"packageMDAnchorID": func(p *apiPackage) string {
+			return formatIDForMD(p.identifier())
 		},
 		"linkForType": func(t *types.Type) string {
-			v, err := linkForType(t, config, typePkgMap)
+			v, err := linkForType(t, config, typePkgMap, false)
 			if err != nil {
 				klog.Fatal(errors.Wrapf(err, "error getting link for type=%s", t.Name))
 				return ""
 			}
 			return v
 		},
-		"anchorIDForType":  func(t *types.Type) string { return anchorIDForLocalType(t, typePkgMap) },
-		"safe":             safe,
-		"sortedTypes":      sortTypes,
-		"typeReferences":   func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
-		"hiddenMember":     func(m types.Member) bool { return hiddenMember(m, config) },
-		"isLocalType":      isLocalType,
-		"isOptionalMember": isOptionalMember,
-		"constantsOfType":  func(t *types.Type) []*types.Type { return constantsOfType(t, typePkgMap[t]) },
+		"linkMDForType": func(t *types.Type) string {
+			v, err := linkForType(t, config, typePkgMap, true)
+			if err != nil {
+				klog.Fatal(errors.Wrapf(err, "error getting link for type=%s", t.Name))
+				return ""
+			}
+			return v
+		},
+		"anchorIDForType":   func(t *types.Type) string { return anchorIDForLocalType(t, typePkgMap) },
+		"anchorIDForTypeMD": func(t *types.Type) string { return formatIDForMD(anchorIDForLocalType(t, typePkgMap)) },
+		"safe":              safe,
+		"sortedTypes":       sortTypes,
+		"typeReferences":    func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
+		"hiddenMember":      func(m types.Member) bool { return hiddenMember(m, config) },
+		"isLocalType":       isLocalType,
+		"isOptionalMember":  isOptionalMember,
+		"constantsOfType":   func(t *types.Type) []*types.Type { return constantsOfType(t, typePkgMap[t]) },
 	}).ParseGlob(filepath.Join(*flTemplateDir, "*.tpl"))
 	if err != nil {
 		return errors.Wrap(err, "parse error")

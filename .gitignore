@@ -14,3 +14,7 @@ refdocs
 
 # goreleaser output
 dist
+
+vendor
+
+gen-crd-api-reference-docs
