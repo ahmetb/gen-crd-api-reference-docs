@@ -77,6 +77,38 @@ type apiPackage struct {
 	Constants  []*types.Type
 }
 
+type nodeMember struct {
+	types.Member
+	Path string
+}
+
+type nodeType struct {
+	*types.Type
+	Path string
+}
+
+func nodeParent(t interface{}, p string) nodeType {
+	var aT *types.Type
+	if n, ok := t.(nodeType); ok {
+		aT = n.Type
+		p = p + "." + n.Path
+	}
+	if aT == nil {
+		n, _ := t.(*types.Type)
+		aT = n
+	}
+
+	return nodeType{aT, p}
+}
+
+func node(m types.Member, path string) nodeMember {
+	name := fieldName(m)
+	if path != "" {
+		name = path + "." + name
+	}
+	return nodeMember{m, path}
+}
+
 func (v *apiPackage) identifier() string { return fmt.Sprintf("%s/%s", v.apiGroup, v.apiVersion) }
 
 func init() {
@@ -346,6 +378,36 @@ func isLocalType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) bool {
 	return ok
 }
 
+func comments(s []string, options ...string) string {
+	s = filterCommentTags(s)
+	doc := strings.Join(s, "\n")
+	if contains(options, "oneline") {
+		doc = strings.Join(s, " ")
+	}
+	if contains(options, "summary") {
+		if len(s) > 0 {
+			doc = s[0]
+		}
+	}
+	for _, op := range options {
+		if op == "markdown" {
+			return string(blackfriday.Run([]byte(doc)))
+		}
+		if op == "html" {
+			return nl2br(doc)
+		}
+	}
+	return doc
+}
+func contains(options []string, value string) bool {
+	for _, op := range options {
+		if op == value {
+			return true
+		}
+	}
+	return false
+}
+
 func renderComments(s []string, markdown bool) string {
 	s = filterCommentTags(s)
 	doc := strings.Join(s, "\n")
@@ -465,6 +527,24 @@ func finalUnderlyingTypeOf(t *types.Type) *types.Type {
 
 		t = t.Underlying
 	}
+}
+
+func yamlType(t types.Type) string {
+	kind := t.Kind
+	if kind == types.Pointer {
+		kind = tryDereference(&t).Kind
+	}
+	if t.Name.Name == "Time" {
+		return "string"
+	}
+	switch kind {
+	case types.Slice:
+		return "array"
+	case types.Struct,
+		types.Map:
+		return "object"
+	}
+	return t.Name.Name
 }
 
 func typeDisplayName(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*apiPackage) string {
@@ -597,6 +677,19 @@ func isOptionalMember(m types.Member) bool {
 	return ok
 }
 
+func ignoreMember(m types.Member) bool {
+	tags := types.ExtractCommentTags("+", m.CommentLines)
+	_, ok := tags["docgen:ignore"]
+	return ok
+}
+
+func isObjectRoot(m types.Type) bool {
+	tags := types.ExtractCommentTags("+", m.CommentLines)
+	values, ok := tags["kubebuilder:object:root"]
+	root := len(values) == 1 && values[0] == "true"
+	return ok && root
+}
+
 func apiVersionForPackage(pkg *types.Package) (string, string, error) {
 	group := groupName(pkg)
 	version := pkg.Name // assumes basename (i.e. "v1" in "core/v1") is apiVersion
@@ -656,9 +749,13 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		"isExportedType":     isExportedType,
 		"fieldName":          fieldName,
 		"fieldEmbedded":      fieldEmbedded,
+		"yamlType":           yamlType,
 		"typeIdentifier":     func(t *types.Type) string { return typeIdentifier(t) },
 		"typeDisplayName":    func(t *types.Type) string { return typeDisplayName(t, config, typePkgMap) },
 		"visibleTypes":       func(t []*types.Type) []*types.Type { return visibleTypes(t, config) },
+		"comments":           comments,
+		"node":               node,
+		"nodeParent":         nodeParent,
 		"renderComments":     func(s []string) string { return renderComments(s, !config.MarkdownDisabled) },
 		"packageDisplayName": func(p *apiPackage) string { return p.identifier() },
 		"apiGroup":           func(t *types.Type) string { return apiGroupForType(t, typePkgMap) },
@@ -684,6 +781,8 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		"hiddenMember":     func(m types.Member) bool { return hiddenMember(m, config) },
 		"isLocalType":      isLocalType,
 		"isOptionalMember": isOptionalMember,
+		"ignoreMember":     ignoreMember,
+		"isObjectRoot":     isObjectRoot,
 		"constantsOfType":  func(t *types.Type) []*types.Type { return constantsOfType(t, typePkgMap[t]) },
 	}).ParseGlob(filepath.Join(*flTemplateDir, "*.tpl"))
 	if err != nil {
