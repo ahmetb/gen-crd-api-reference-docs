@@ -17,3 +17,4 @@ dist
 
 .idea/
 gen-crd-api-reference-docs
+vendor
