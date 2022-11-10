@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
@@ -164,7 +163,7 @@ func main() {
 		if err != nil {
 			klog.Fatalf("failed: %+v", err)
 		}
-		if err := ioutil.WriteFile(*flOutFile, []byte(s), 0644); err != nil {
+		if err := os.WriteFile(*flOutFile, []byte(s), 0644); err != nil {
 			klog.Fatalf("failed to write to out file: %v", err)
 		}
 		klog.Infof("written to %s", *flOutFile)
@@ -291,7 +290,7 @@ func combineAPIPackages(pkgs []*types.Package) ([]*apiPackage, error) {
 		}
 	}
 
-	sort.Sort(sort.StringSlice(pkgIds))
+	sort.Strings(pkgIds)
 
 	out := make([]*apiPackage, 0, len(pkgMap))
 	for _, id := range pkgIds {
@@ -393,16 +392,36 @@ func apiGroupForType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) stri
 
 // anchorIDForLocalType returns the #anchor string for the local type
 func anchorIDForLocalType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) string {
-	return fmt.Sprintf("%s.%s", apiGroupForType(t, typePkgMap), t.Name.Name)
+	dt := tryDereferenceDeep(t)
+
+	return fmt.Sprintf("%s.%s", apiGroupForType(dt, typePkgMap), dt.Name.Name)
+}
+
+func formatIDForMD(s string) string {
+	replacer := strings.NewReplacer(".", "-", "/", "-")
+
+	return replacer.Replace(s)
+}
+
+func tryDereferenceDeep(t *types.Type) *types.Type {
+	if t.Elem == nil {
+		return t
+	}
+
+	return tryDereferenceDeep(t.Elem)
 }
 
 // linkForType returns an anchor to the type if it can be generated. returns
 // empty string if it is not a local type or unrecognized external type.
-func linkForType(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*apiPackage) (string, error) {
+func linkForType(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*apiPackage, isMarkdown bool) (string, error) {
 	t = tryDereference(t) // dereference kind=Pointer
 
 	if isLocalType(t, typePkgMap) {
-		return "#" + anchorIDForLocalType(t, typePkgMap), nil
+		if isMarkdown {
+			return "#" + formatIDForMD(anchorIDForLocalType(t, typePkgMap)), nil
+		} else {
+			return "#" + anchorIDForLocalType(t, typePkgMap), nil
+		}
 	}
 
 	var arrIndex = func(a []string, i int) string {
@@ -573,14 +592,6 @@ func visibleTypes(in []*types.Type, c generatorConfig) []*types.Type {
 	return out
 }
 
-func packageDisplayName(pkg *types.Package, apiVersions map[string]string) string {
-	apiGroupVersion, ok := apiVersions[pkg.Path]
-	if ok {
-		return apiGroupVersion
-	}
-	return pkg.Path // go import path
-}
-
 func filterCommentTags(comments []string) []string {
 	var out []string
 	for _, v := range comments {
@@ -621,17 +632,6 @@ func extractTypeToPackageMap(pkgs []*apiPackage) map[*types.Type]*apiPackage {
 	return out
 }
 
-// packageMapToList flattens the map.
-func packageMapToList(pkgs map[string]*apiPackage) []*apiPackage {
-	// TODO(ahmetb): we should probably not deal with maps, this type can be
-	// a list everywhere.
-	out := make([]*apiPackage, 0, len(pkgs))
-	for _, v := range pkgs {
-		out = append(out, v)
-	}
-	return out
-}
-
 // constantsOfType finds all the constants in pkg that have the
 // same underlying type as t. This is intended for use by enum
 // type validation, where users need to specify one of a specific
@@ -667,24 +667,36 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 			// func, and it's fine since it retuns valid DOM id strings like
 			// 'serving.knative.dev/v1alpha1' which is valid per HTML5, except
 			// spaces, so just trim those.
-			return strings.Replace(p.identifier(), " ", "", -1)
+			return strings.ReplaceAll(p.identifier(), " ", "")
+		},
+		"packageMDAnchorID": func(p *apiPackage) string {
+			return formatIDForMD(p.identifier())
 		},
 		"linkForType": func(t *types.Type) string {
-			v, err := linkForType(t, config, typePkgMap)
+			v, err := linkForType(t, config, typePkgMap, false)
 			if err != nil {
 				klog.Fatal(errors.Wrapf(err, "error getting link for type=%s", t.Name))
 				return ""
 			}
 			return v
 		},
-		"anchorIDForType":  func(t *types.Type) string { return anchorIDForLocalType(t, typePkgMap) },
-		"safe":             safe,
-		"sortedTypes":      sortTypes,
-		"typeReferences":   func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
-		"hiddenMember":     func(m types.Member) bool { return hiddenMember(m, config) },
-		"isLocalType":      isLocalType,
-		"isOptionalMember": isOptionalMember,
-		"constantsOfType":  func(t *types.Type) []*types.Type { return constantsOfType(t, typePkgMap[t]) },
+		"linkMDForType": func(t *types.Type) string {
+			v, err := linkForType(t, config, typePkgMap, true)
+			if err != nil {
+				klog.Fatal(errors.Wrapf(err, "error getting link for type=%s", t.Name))
+				return ""
+			}
+			return v
+		},
+		"anchorIDForType":   func(t *types.Type) string { return anchorIDForLocalType(t, typePkgMap) },
+		"anchorIDForTypeMD": func(t *types.Type) string { return formatIDForMD(anchorIDForLocalType(t, typePkgMap)) },
+		"safe":              safe,
+		"sortedTypes":       sortTypes,
+		"typeReferences":    func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
+		"hiddenMember":      func(m types.Member) bool { return hiddenMember(m, config) },
+		"isLocalType":       isLocalType,
+		"isOptionalMember":  isOptionalMember,
+		"constantsOfType":   func(t *types.Type) []*types.Type { return constantsOfType(t, typePkgMap[t]) },
 	}).ParseGlob(filepath.Join(*flTemplateDir, "*.tpl"))
 	if err != nil {
 		return errors.Wrap(err, "parse error")
