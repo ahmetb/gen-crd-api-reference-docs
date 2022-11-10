@@ -14,3 +14,6 @@ refdocs
 
 # goreleaser output
 dist
+
+.idea/
+gen-crd-api-reference-docs
