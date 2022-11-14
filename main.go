@@ -25,6 +25,8 @@ import (
 	"k8s.io/gengo/parser"
 	"k8s.io/gengo/types"
 	"k8s.io/klog"
+
+	ltypes "github.com/ViaQ/gen-crd-api-reference-docs/types"
 )
 
 var (
@@ -68,14 +70,6 @@ type externalPackage struct {
 	DocsURLTemplate string `json:"docsURLTemplate"`
 }
 
-type apiPackage struct {
-	apiGroup   string
-	apiVersion string
-	GoPackages []*types.Package
-	Types      []*types.Type // because multiple 'types.Package's can add types to an apiVersion
-	Constants  []*types.Type
-}
-
 type nodeMember struct {
 	types.Member
 	Path string
@@ -107,8 +101,6 @@ func node(m types.Member, path string) nodeMember {
 	}
 	return nodeMember{m, path}
 }
-
-func (v *apiPackage) identifier() string { return fmt.Sprintf("%s/%s", v.apiGroup, v.apiVersion) }
 
 func init() {
 	klog.InitFlags(nil)
@@ -279,8 +271,8 @@ func containsString(sl []string, str string) bool {
 
 // combineAPIPackages groups the Go packages by the <apiGroup+apiVersion> they
 // offer, and combines the types in them.
-func combineAPIPackages(pkgs []*types.Package) ([]*apiPackage, error) {
-	pkgMap := make(map[string]*apiPackage)
+func combineAPIPackages(pkgs []*types.Package) ([]*ltypes.ApiPackage, error) {
+	pkgMap := make(map[string]*ltypes.ApiPackage)
 	var pkgIds []string
 
 	flattenTypes := func(typeMap map[string]*types.Type) []*types.Type {
@@ -307,9 +299,9 @@ func combineAPIPackages(pkgs []*types.Package) ([]*apiPackage, error) {
 		id := fmt.Sprintf("%s/%s", apiGroup, apiVersion)
 		v, ok := pkgMap[id]
 		if !ok {
-			pkgMap[id] = &apiPackage{
-				apiGroup:   apiGroup,
-				apiVersion: apiVersion,
+			pkgMap[id] = &ltypes.ApiPackage{
+				ApiGroup:   apiGroup,
+				ApiVersion: apiVersion,
 				Types:      flattenTypes(pkg.Types),
 				Constants:  flattenTypes(pkg.Constants),
 				GoPackages: []*types.Package{pkg},
@@ -324,7 +316,7 @@ func combineAPIPackages(pkgs []*types.Package) ([]*apiPackage, error) {
 
 	sort.Strings(pkgIds)
 
-	out := make([]*apiPackage, 0, len(pkgMap))
+	out := make([]*ltypes.ApiPackage, 0, len(pkgMap))
 	for _, id := range pkgIds {
 		out = append(out, pkgMap[id])
 	}
@@ -337,7 +329,7 @@ func isVendorPackage(pkg *types.Package) bool {
 	return strings.Contains(pkg.SourcePath, vendorPattern)
 }
 
-func findTypeReferences(pkgs []*apiPackage) map[*types.Type][]*types.Type {
+func findTypeReferences(pkgs []*ltypes.ApiPackage) map[*types.Type][]*types.Type {
 	m := make(map[*types.Type][]*types.Type)
 	for _, pkg := range pkgs {
 		for _, typ := range pkg.Types {
@@ -357,6 +349,12 @@ func isExportedType(t *types.Type) bool {
 	return strings.Contains(strings.Join(t.SecondClosestCommentLines, "\n"), "+genclient")
 }
 
+func isDeprecatedMember(m types.Member) bool {
+	tags := types.ExtractCommentTags("+", m.CommentLines)
+	_, ok := tags["deprecated"]
+	return ok
+}
+
 func fieldName(m types.Member) string {
 	v := reflect.StructTag(m.Tags).Get("json")
 	v = strings.TrimSuffix(v, ",omitempty")
@@ -371,7 +369,7 @@ func fieldEmbedded(m types.Member) bool {
 	return strings.Contains(reflect.StructTag(m.Tags).Get("json"), ",inline")
 }
 
-func isLocalType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) bool {
+func isLocalType(t *types.Type, typePkgMap map[*types.Type]*ltypes.ApiPackage) bool {
 	t = tryDereference(t)
 	_, ok := typePkgMap[t]
 	return ok
@@ -440,7 +438,7 @@ func typeIdentifier(t *types.Type) string {
 }
 
 // apiGroupForType looks up apiGroup for the given type
-func apiGroupForType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) string {
+func apiGroupForType(t *types.Type, typePkgMap map[*types.Type]*ltypes.ApiPackage) string {
 	t = tryDereference(t)
 
 	v := typePkgMap[t]
@@ -449,11 +447,11 @@ func apiGroupForType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) stri
 		return "<UNKNOWN_API_GROUP>"
 	}
 
-	return v.identifier()
+	return v.Identifier()
 }
 
 // anchorIDForLocalType returns the #anchor string for the local type
-func anchorIDForLocalType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) string {
+func anchorIDForLocalType(t *types.Type, typePkgMap map[*types.Type]*ltypes.ApiPackage) string {
 	dt := tryDereferenceDeep(t)
 
 	return fmt.Sprintf("%s.%s", apiGroupForType(dt, typePkgMap), dt.Name.Name)
@@ -475,7 +473,7 @@ func tryDereferenceDeep(t *types.Type) *types.Type {
 
 // linkForType returns an anchor to the type if it can be generated. returns
 // empty string if it is not a local type or unrecognized external type.
-func linkForType(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*apiPackage, isMarkdown bool) (string, error) {
+func linkForType(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*ltypes.ApiPackage, isMarkdown bool) (string, error) {
 	t = tryDereference(t) // dereference kind=Pointer
 
 	if isLocalType(t, typePkgMap) {
@@ -566,7 +564,10 @@ func yamlType(t types.Type) string {
 	return t.Name.Name
 }
 
-func typeDisplayName(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*apiPackage) string {
+func typeDisplayName(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*ltypes.ApiPackage) string {
+	if ok, value := hasMeta(*t, "docgen:displayname"); ok {
+		return value
+	}
 	s := typeIdentifier(t)
 
 	if isLocalType(t, typePkgMap) {
@@ -701,6 +702,16 @@ func isObjectRoot(m types.Type) bool {
 	return ok && root
 }
 
+func hasMeta(m types.Type, key string) (bool, string) {
+	tags := types.ExtractCommentTags("+", m.CommentLines)
+	values, ok := tags[key]
+	value := ""
+	if len(values) > 0 {
+		value = values[0]
+	}
+	return ok, value
+}
+
 func apiVersionForPackage(pkg *types.Package) (string, string, error) {
 	group := groupName(pkg)
 	version := pkg.Name // assumes basename (i.e. "v1" in "core/v1") is apiVersion
@@ -712,8 +723,8 @@ func apiVersionForPackage(pkg *types.Package) (string, string, error) {
 }
 
 // extractTypeToPackageMap creates a *types.Type map to apiPackage
-func extractTypeToPackageMap(pkgs []*apiPackage) map[*types.Type]*apiPackage {
-	out := make(map[*types.Type]*apiPackage)
+func extractTypeToPackageMap(pkgs []*ltypes.ApiPackage) map[*types.Type]*ltypes.ApiPackage {
+	out := make(map[*types.Type]*ltypes.ApiPackage)
 	for _, ap := range pkgs {
 		for _, t := range ap.Types {
 			out[t] = ap
@@ -729,7 +740,7 @@ func extractTypeToPackageMap(pkgs []*apiPackage) map[*types.Type]*apiPackage {
 // same underlying type as t. This is intended for use by enum
 // type validation, where users need to specify one of a specific
 // set of constant values for a field.
-func constantsOfType(t *types.Type, pkg *apiPackage) []*types.Type {
+func constantsOfType(t *types.Type, pkg *ltypes.ApiPackage) []*types.Type {
 	constants := []*types.Type{}
 
 	for _, c := range pkg.Constants {
@@ -741,11 +752,12 @@ func constantsOfType(t *types.Type, pkg *apiPackage) []*types.Type {
 	return sortTypes(constants)
 }
 
-func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
+func render(w io.Writer, pkgs []*ltypes.ApiPackage, config generatorConfig) error {
 	references := findTypeReferences(pkgs)
 	typePkgMap := extractTypeToPackageMap(pkgs)
 
 	t, err := template.New("").Funcs(map[string]interface{}{
+		"isDeprecatedMember": isDeprecatedMember,
 		"isExportedType":     isExportedType,
 		"fieldName":          fieldName,
 		"fieldEmbedded":      fieldEmbedded,
@@ -757,17 +769,17 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		"node":               node,
 		"nodeParent":         nodeParent,
 		"renderComments":     func(s []string) string { return renderComments(s, !config.MarkdownDisabled) },
-		"packageDisplayName": func(p *apiPackage) string { return p.identifier() },
+		"packageDisplayName": func(p *ltypes.ApiPackage) string { return p.DisplayName() },
 		"apiGroup":           func(t *types.Type) string { return apiGroupForType(t, typePkgMap) },
-		"packageAnchorID": func(p *apiPackage) string {
+		"packageAnchorID": func(p *ltypes.ApiPackage) string {
 			// TODO(ahmetb): currently this is the same as packageDisplayName
 			// func, and it's fine since it retuns valid DOM id strings like
 			// 'serving.knative.dev/v1alpha1' which is valid per HTML5, except
 			// spaces, so just trim those.
-			return strings.ReplaceAll(p.identifier(), " ", "")
+			return strings.ReplaceAll(p.Identifier(), " ", "")
 		},
-		"packageMDAnchorID": func(p *apiPackage) string {
-			return formatIDForMD(p.identifier())
+		"packageMDAnchorID": func(p *ltypes.ApiPackage) string {
+			return formatIDForMD(p.Identifier())
 		},
 		"linkForType": func(t *types.Type) string {
 			v, err := linkForType(t, config, typePkgMap, false)
@@ -793,8 +805,8 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		"hiddenMember":      func(m types.Member) bool { return hiddenMember(m, config) },
 		"isLocalType":       isLocalType,
 		"isOptionalMember":  isOptionalMember,
-		"ignoreMember":     ignoreMember,
-		"isObjectRoot":     isObjectRoot,
+		"ignoreMember":      ignoreMember,
+		"isObjectRoot":      isObjectRoot,
 		"constantsOfType":   func(t *types.Type) []*types.Type { return constantsOfType(t, typePkgMap[t]) },
 	}).ParseGlob(filepath.Join(*flTemplateDir, "*.tpl"))
 	if err != nil {
