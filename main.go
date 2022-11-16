@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/ViaQ/gen-crd-api-reference-docs/helpers"
 	"html/template"
 	"io"
 	"net/http"
@@ -24,7 +25,7 @@ import (
 	"github.com/russross/blackfriday/v2"
 	"k8s.io/gengo/parser"
 	"k8s.io/gengo/types"
-	"k8s.io/klog"
+	klog "k8s.io/klog/v2"
 
 	ltypes "github.com/ViaQ/gen-crd-api-reference-docs/types"
 )
@@ -172,9 +173,8 @@ func main() {
 		if err != nil {
 			return "", errors.Wrap(err, "failed to render the result")
 		}
-
 		// remove trailing whitespace from each html line for markdown renderers
-		s := regexp.MustCompile(`(?m)^\s+`).ReplaceAllString(b.String(), "")
+		s := regexp.MustCompile(`(?m)^[ \t]+`).ReplaceAllString(b.String(), "")
 		return s, nil
 	}
 
@@ -528,10 +528,7 @@ func linkForType(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*l
 
 // tryDereference returns the underlying type when t is a pointer, map, or slice.
 func tryDereference(t *types.Type) *types.Type {
-	for t.Elem != nil {
-		t = t.Elem
-	}
-	return t
+	return ltypes.TryDereference(t)
 }
 
 // finalUnderlyingTypeOf walks the type hierarchy for t and returns
@@ -544,24 +541,6 @@ func finalUnderlyingTypeOf(t *types.Type) *types.Type {
 
 		t = t.Underlying
 	}
-}
-
-func yamlType(t types.Type) string {
-	kind := t.Kind
-	if kind == types.Pointer {
-		kind = tryDereference(&t).Kind
-	}
-	if t.Name.Name == "Time" {
-		return "string"
-	}
-	switch kind {
-	case types.Slice:
-		return "array"
-	case types.Struct,
-		types.Map:
-		return "object"
-	}
-	return t.Name.Name
 }
 
 func typeDisplayName(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*ltypes.ApiPackage) string {
@@ -648,6 +627,14 @@ func typeReferences(t *types.Type, c generatorConfig, references map[*types.Type
 	}
 	sortTypes(out)
 	return out
+}
+
+func sortMembers(members []types.Member) []types.Member {
+	sort.Slice(members, func(i, j int) bool {
+		t1, t2 := members[i], members[j]
+		return fieldName(t1) < fieldName(t2)
+	})
+	return members
 }
 
 func sortTypes(typs []*types.Type) []*types.Type {
@@ -761,7 +748,8 @@ func render(w io.Writer, pkgs []*ltypes.ApiPackage, config generatorConfig) erro
 		"isExportedType":     isExportedType,
 		"fieldName":          fieldName,
 		"fieldEmbedded":      fieldEmbedded,
-		"yamlType":           yamlType,
+		"flattenMembers":     types.FlattenMembers,
+		"yamlType":           helpers.YamlType,
 		"typeIdentifier":     func(t *types.Type) string { return typeIdentifier(t) },
 		"typeDisplayName":    func(t *types.Type) string { return typeDisplayName(t, config, typePkgMap) },
 		"visibleTypes":       func(t []*types.Type) []*types.Type { return visibleTypes(t, config) },
@@ -800,6 +788,7 @@ func render(w io.Writer, pkgs []*ltypes.ApiPackage, config generatorConfig) erro
 		"anchorIDForType":   func(t *types.Type) string { return anchorIDForLocalType(t, typePkgMap) },
 		"anchorIDForTypeMD": func(t *types.Type) string { return formatIDForMD(anchorIDForLocalType(t, typePkgMap)) },
 		"safe":              safe,
+		"sortMembers":       sortMembers,
 		"sortedTypes":       sortTypes,
 		"typeReferences":    func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
 		"hiddenMember":      func(m types.Member) bool { return hiddenMember(m, config) },

@@ -20,3 +20,11 @@ func (v *ApiPackage) Identifier() string {
 func (v *ApiPackage) DisplayName() string {
 	return v.Identifier()
 }
+
+// TryDereference returns the underlying type when t is a pointer, map, or slice.
+func TryDereference(t *types.Type) *types.Type {
+	for t.Elem != nil {
+		t = t.Elem
+	}
+	return t
+}
