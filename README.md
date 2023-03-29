@@ -23,6 +23,11 @@ API Reference Docs [like this][ar] this tool is for you.
 - [**Azure Service Operator** supported resources](https://azure.github.io/azure-service-operator/reference/)
 - _[[ADD YOUR PROJECT HERE]]_
 
+Also some **forks**:
+
+- [**elastic/crd-ref-docs**](https://github.com/elastic/crd-ref-docs): A fresh re-implementation inspired
+  by this project that supports AsciiDoc. Used by Elastic Cloud on Kubernetes API reference docs.
+
 ## Why
 
 Normally you would want to use the same [docs generator][dg] as [Kubernetes API
