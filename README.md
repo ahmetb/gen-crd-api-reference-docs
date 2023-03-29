@@ -3,7 +3,7 @@
 If you have a project that is providing Custom Resource Definitions and wanted to generate
 API Reference Docs [like this][ar] this tool is for you.
 
-[ar]: https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.13/
+[ar]: https://knative.dev/docs/reference/api/serving-api/
 
 ## Current Users
 
