@@ -1,4 +1,4 @@
-module github.com/ahmetb/gen-crd-api-reference-docs
+module github.com/theunrepentantgeek/gen-crd-api-reference-docs
 
 go 1.15
 
