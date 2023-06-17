@@ -328,16 +328,6 @@ func isExportedType(t *types.Type) bool {
 	return strings.Contains(strings.Join(t.SecondClosestCommentLines, "\n"), "+genclient")
 }
 
-func fieldName(m types.Member) string {
-	v := reflect.StructTag(m.Tags).Get("json")
-	v = strings.TrimSuffix(v, ",omitempty")
-	v = strings.TrimSuffix(v, ",inline")
-	if v != "" {
-		return v
-	}
-	return m.Name
-}
-
 func fieldEmbedded(m types.Member) bool {
 	return strings.Contains(reflect.StructTag(m.Tags).Get("json"), ",inline")
 }
