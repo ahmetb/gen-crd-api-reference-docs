@@ -22,6 +22,12 @@
             </p>
         {{ end}}
 
+        {{ if isMemberCollapsed . }}
+            <p>
+                (Collapsed from {{ range (collapsedTypes .) }}{{.}}.{{end}})
+            </p>
+        {{ end }}
+
         {{ if isOptionalMember .}}
             <em>(Optional)</em>
         {{ end }}

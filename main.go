@@ -35,10 +35,13 @@ var (
 
 	flHTTPAddr = flag.String("http-addr", "", "start an HTTP server on specified addr to view the result (e.g. :8080)")
 	flOutFile  = flag.String("out-file", "", "path to output file to save the result")
+
+	flCollapseInline = flag.Bool("collapse-inline", false, "display the underlying fields for inline values")
 )
 
 const (
 	docCommentForceIncludes = "// +gencrdrefdocs:force"
+	collapsedFromComment    = "collapsedFrom"
 )
 
 type generatorConfig struct {
@@ -141,6 +144,13 @@ func main() {
 	apiPackages, err := combineAPIPackages(pkgs)
 	if err != nil {
 		klog.Fatal(err)
+	}
+
+	if flCollapseInline != nil && *flCollapseInline {
+		err := collapseInlineAPIPackages(apiPackages)
+		if err != nil {
+			klog.Fatal(err)
+		}
 	}
 
 	mkOutput := func() (string, error) {
@@ -298,6 +308,93 @@ func combineAPIPackages(pkgs []*types.Package) ([]*apiPackage, error) {
 		out = append(out, pkgMap[id])
 	}
 	return out, nil
+}
+
+// collapseInlineAPIPackages collapses all inline members for a list of API packages
+func collapseInlineAPIPackages(apiPackages []*apiPackage) error {
+	for i := range apiPackages {
+		if err := collapseInlineTypes(apiPackages[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// collapseInlineTypes collapses all inline members for all types in a given API package
+func collapseInlineTypes(pkg *apiPackage) error {
+	var err error
+	for i := range pkg.Types {
+		pkg.Types[i].Members, err = collapseMembers(pkg, pkg.Types[i])
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// collapseMembers recursively collapses inline members to their leaf types
+func collapseMembers(pkg *apiPackage, t *types.Type) ([]types.Member, error) {
+	var newMembers []types.Member
+	for i := range t.Members {
+		if memberType := findMemberType(pkg, t.Members[i]); fieldEmbedded(t.Members[i]) && memberType != nil {
+			collapsedMembers, err := collapseMembers(pkg, memberType)
+			if err != nil {
+				return newMembers, err
+			}
+			membersWithComments, err := populateCollapsedMemberComments(collapsedMembers, memberType)
+			if err != nil {
+				return newMembers, err
+			}
+
+			newMembers = append(newMembers, membersWithComments...)
+		} else {
+			newMembers = append(newMembers, t.Members[i])
+		}
+	}
+	return newMembers, nil
+}
+
+// findMemberType returns a type from the API Package with the same name as the given member
+func findMemberType(pkg *apiPackage, m types.Member) *types.Type {
+	for i := range pkg.Types {
+		if pkg.Types[i].Name.Name == m.Name {
+			return pkg.Types[i]
+		}
+	}
+	return nil
+}
+
+func populateCollapsedMemberComments(members []types.Member, parentType *types.Type) ([]types.Member, error) {
+	for i := range members {
+		createOrUpdateComment(&members[i], collapsedFromComment, parentType.Name.Name)
+	}
+	return members, nil
+}
+
+func createOrUpdateComment(member *types.Member, key, value string) {
+	for i, line := range member.CommentLines {
+		if !strings.HasPrefix(line, "+") || !strings.HasPrefix(strings.ReplaceAll(line, "+", ""), key) {
+			continue
+		}
+		member.CommentLines[i] = fmt.Sprintf("%s,%s", line, value)
+		return
+	}
+	member.CommentLines = append(member.CommentLines, fmt.Sprintf("+%s=%s", key, value))
+}
+
+func isMemberCollapsed(m *types.Member) bool {
+	tags := types.ExtractCommentTags("+", m.CommentLines)
+	_, ok := tags[collapsedFromComment]
+	return ok
+}
+
+func getCollapsedTypes(m *types.Member) []string {
+	tags := types.ExtractCommentTags("+", m.CommentLines)
+	collapsedItems, ok := tags[collapsedFromComment]
+	if !ok || len(collapsedItems) != 1 {
+		return []string{}
+	}
+	return strings.Split(collapsedItems[0], ",")
 }
 
 // isVendorPackage determines if package is coming from vendor/ dir.
@@ -677,14 +774,16 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 			}
 			return v
 		},
-		"anchorIDForType":  func(t *types.Type) string { return anchorIDForLocalType(t, typePkgMap) },
-		"safe":             safe,
-		"sortedTypes":      sortTypes,
-		"typeReferences":   func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
-		"hiddenMember":     func(m types.Member) bool { return hiddenMember(m, config) },
-		"isLocalType":      isLocalType,
-		"isOptionalMember": isOptionalMember,
-		"constantsOfType":  func(t *types.Type) []*types.Type { return constantsOfType(t, typePkgMap[t]) },
+		"anchorIDForType":   func(t *types.Type) string { return anchorIDForLocalType(t, typePkgMap) },
+		"safe":              safe,
+		"sortedTypes":       sortTypes,
+		"typeReferences":    func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
+		"hiddenMember":      func(m types.Member) bool { return hiddenMember(m, config) },
+		"isLocalType":       isLocalType,
+		"isOptionalMember":  isOptionalMember,
+		"constantsOfType":   func(t *types.Type) []*types.Type { return constantsOfType(t, typePkgMap[t]) },
+		"isMemberCollapsed": isMemberCollapsed,
+		"collapsedTypes":    getCollapsedTypes,
 	}).ParseGlob(filepath.Join(*flTemplateDir, "*.tpl"))
 	if err != nil {
 		return errors.Wrap(err, "parse error")
