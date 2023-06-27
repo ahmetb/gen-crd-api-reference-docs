@@ -80,6 +80,11 @@ type apiPackage struct {
 	Constants  []*types.Type
 }
 
+type collapsedItemReference struct {
+	Name      string
+	Reference string
+}
+
 func (v *apiPackage) identifier() string { return fmt.Sprintf("%s/%s", v.apiGroup, v.apiVersion) }
 
 func init() {
@@ -147,7 +152,7 @@ func main() {
 	}
 
 	if flCollapseInline != nil && *flCollapseInline {
-		err := collapseInlineAPIPackages(apiPackages)
+		err := collapseInlineAPIPackages(apiPackages, config)
 		if err != nil {
 			klog.Fatal(err)
 		}
@@ -311,9 +316,10 @@ func combineAPIPackages(pkgs []*types.Package) ([]*apiPackage, error) {
 }
 
 // collapseInlineAPIPackages collapses all inline members for a list of API packages
-func collapseInlineAPIPackages(apiPackages []*apiPackage) error {
+func collapseInlineAPIPackages(apiPackages []*apiPackage, c generatorConfig) error {
+	typePkgMap := extractTypeToPackageMap(apiPackages)
 	for i := range apiPackages {
-		if err := collapseInlineTypes(apiPackages[i]); err != nil {
+		if err := collapseInlineTypes(typePkgMap, c, apiPackages[i]); err != nil {
 			return err
 		}
 	}
@@ -321,10 +327,10 @@ func collapseInlineAPIPackages(apiPackages []*apiPackage) error {
 }
 
 // collapseInlineTypes collapses all inline members for all types in a given API package
-func collapseInlineTypes(pkg *apiPackage) error {
+func collapseInlineTypes(typePkgMap map[*types.Type]*apiPackage, c generatorConfig, pkg *apiPackage) error {
 	var err error
 	for i := range pkg.Types {
-		pkg.Types[i].Members, err = collapseMembers(pkg, pkg.Types[i])
+		pkg.Types[i].Members, err = collapseMembers(typePkgMap, c, pkg, pkg.Types[i])
 		if err != nil {
 			return err
 		}
@@ -333,15 +339,15 @@ func collapseInlineTypes(pkg *apiPackage) error {
 }
 
 // collapseMembers recursively collapses inline members to their leaf types
-func collapseMembers(pkg *apiPackage, t *types.Type) ([]types.Member, error) {
+func collapseMembers(typePkgMap map[*types.Type]*apiPackage, c generatorConfig, pkg *apiPackage, t *types.Type) ([]types.Member, error) {
 	var newMembers []types.Member
 	for i := range t.Members {
 		if memberType := findMemberType(pkg, t.Members[i]); fieldEmbedded(t.Members[i]) && memberType != nil {
-			collapsedMembers, err := collapseMembers(pkg, memberType)
+			collapsedMembers, err := collapseMembers(typePkgMap, c, pkg, memberType)
 			if err != nil {
 				return newMembers, err
 			}
-			membersWithComments, err := populateCollapsedMemberComments(collapsedMembers, memberType)
+			membersWithComments, err := populateCollapsedMemberComments(typePkgMap, c, collapsedMembers, memberType)
 			if err != nil {
 				return newMembers, err
 			}
@@ -364,22 +370,55 @@ func findMemberType(pkg *apiPackage, m types.Member) *types.Type {
 	return nil
 }
 
-func populateCollapsedMemberComments(members []types.Member, parentType *types.Type) ([]types.Member, error) {
+func populateCollapsedMemberComments(typePkgMap map[*types.Type]*apiPackage, c generatorConfig, members []types.Member, parentType *types.Type) ([]types.Member, error) {
 	for i := range members {
-		createOrUpdateComment(&members[i], collapsedFromComment, parentType.Name.Name)
+		if err := createOrUpdateComment(typePkgMap, c, &members[i], collapsedFromComment, parentType); err != nil {
+			return members, err
+		}
 	}
 	return members, nil
 }
 
-func createOrUpdateComment(member *types.Member, key, value string) {
+func createOrUpdateComment(typePkgMap map[*types.Type]*apiPackage, c generatorConfig, member *types.Member, key string, t *types.Type) error {
+	link, err := linkForType(t, c, typePkgMap)
+	if err != nil {
+		return err
+	}
+
+	commentItem := collapsedItemReference{
+		Name:      t.Name.Name,
+		Reference: link,
+	}
+
 	for i, line := range member.CommentLines {
-		if !strings.HasPrefix(line, "+") || !strings.HasPrefix(strings.ReplaceAll(line, "+", ""), key) {
+		splitLine := strings.SplitN(line, "=", 1)
+		if !strings.HasPrefix(line, "+") || !strings.HasPrefix(strings.ReplaceAll(line, "+", ""), key) || len(splitLine) < 2 {
 			continue
 		}
-		member.CommentLines[i] = fmt.Sprintf("%s,%s", line, value)
-		return
+		var itemRefs []collapsedItemReference
+		err := json.Unmarshal([]byte(splitLine[1]), &itemRefs)
+		if err != nil {
+			return err
+		}
+
+		// prepend the comment item because
+		// the recursion causes the parent references to populate in reverse order
+		itemRefs = append([]collapsedItemReference{commentItem}, itemRefs...)
+		itemByte, err := json.Marshal(itemRefs)
+		if err != nil {
+			return err
+		}
+
+		member.CommentLines[i] = fmt.Sprintf("%s,%s", line, string(itemByte))
+		return nil
 	}
-	member.CommentLines = append(member.CommentLines, fmt.Sprintf("+%s=%s", key, value))
+
+	itemByte, err := json.Marshal([]collapsedItemReference{commentItem})
+	if err != nil {
+		return err
+	}
+	member.CommentLines = append(member.CommentLines, fmt.Sprintf("+%s=%s", key, string(itemByte)))
+	return nil
 }
 
 func isMemberCollapsed(m *types.Member) bool {
@@ -388,13 +427,20 @@ func isMemberCollapsed(m *types.Member) bool {
 	return ok
 }
 
-func getCollapsedTypes(m *types.Member) []string {
+func getCollapsedTypes(m *types.Member) []collapsedItemReference {
 	tags := types.ExtractCommentTags("+", m.CommentLines)
 	collapsedItems, ok := tags[collapsedFromComment]
 	if !ok || len(collapsedItems) != 1 {
-		return []string{}
+		return []collapsedItemReference{}
 	}
-	return strings.Split(collapsedItems[0], ",")
+
+	var itemRefs []collapsedItemReference
+	err := json.Unmarshal([]byte(collapsedItems[0]), &itemRefs)
+	if err != nil {
+		klog.Fatal(err)
+	}
+
+	return itemRefs
 }
 
 // isVendorPackage determines if package is coming from vendor/ dir.
