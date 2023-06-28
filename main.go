@@ -33,9 +33,8 @@ var (
 	flAPIDir      = flag.String("api-dir", "", "api directory (or import path), point this to pkg/apis")
 	flTemplateDir = flag.String("template-dir", "template", "path to template/ dir")
 
-	flHTTPAddr = flag.String("http-addr", "", "start an HTTP server on specified addr to view the result (e.g. :8080)")
-	flOutFile  = flag.String("out-file", "", "path to output file to save the result")
-
+	flHTTPAddr       = flag.String("http-addr", "", "start an HTTP server on specified addr to view the result (e.g. :8080)")
+	flOutFile        = flag.String("out-file", "", "path to output file to save the result")
 	flCollapseInline = flag.Bool("collapse-inline", false, "display the underlying fields for inline values")
 )
 
@@ -370,6 +369,7 @@ func findMemberType(pkg *apiPackage, m types.Member) *types.Type {
 	return nil
 }
 
+// populateCollapsedMemberComments creates comments for the given member list to hold parent resources
 func populateCollapsedMemberComments(typePkgMap map[*types.Type]*apiPackage, c generatorConfig, members []types.Member, parentType *types.Type) ([]types.Member, error) {
 	for i := range members {
 		if err := createOrUpdateComment(typePkgMap, c, &members[i], collapsedFromComment, parentType); err != nil {
@@ -379,6 +379,8 @@ func populateCollapsedMemberComments(typePkgMap map[*types.Type]*apiPackage, c g
 	return members, nil
 }
 
+// createOrUpdateComment creates a comment object from the collapsedItemReference that includes the parent name and link
+// This is used in rendering to generate the link object in the collapsed comment when we generate the members
 func createOrUpdateComment(typePkgMap map[*types.Type]*apiPackage, c generatorConfig, member *types.Member, key string, t *types.Type) error {
 	link, err := linkForType(t, c, typePkgMap)
 	if err != nil {
@@ -421,12 +423,15 @@ func createOrUpdateComment(typePkgMap map[*types.Type]*apiPackage, c generatorCo
 	return nil
 }
 
+// isMemberCollapsed returns true if the member has a collapsedFrom comment
 func isMemberCollapsed(m *types.Member) bool {
 	tags := types.ExtractCommentTags("+", m.CommentLines)
 	_, ok := tags[collapsedFromComment]
 	return ok
 }
 
+// getCollapsedTypes returns a list of types given in the parent list
+// This list is used to render parent object and their links
 func getCollapsedTypes(m *types.Member) []collapsedItemReference {
 	tags := types.ExtractCommentTags("+", m.CommentLines)
 	collapsedItems, ok := tags[collapsedFromComment]

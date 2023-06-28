@@ -24,7 +24,7 @@
 
         {{ if isMemberCollapsed . }}
             <p>
-                (Collapsed from {{ range (collapsedTypes .) }}<a href="{{.Reference}}">{{.Name}}</a>.{{- end -}})
+                (Collapsed from {{ range (collapsedTypes .) }}<a href="{{ .Reference }}">{{ .Name }}</a>.{{- end -}})
             </p>
         {{ end }}
 
