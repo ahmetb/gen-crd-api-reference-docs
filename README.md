@@ -5,6 +5,23 @@ API Reference Docs [like this][ar] this tool is for you.
 
 [ar]: https://knative.dev/docs/reference/api/serving-api/
 
+## Alternatives
+
+This project has inspired creation of the following projects:
+
+- [**Kubernetes reference-docs generator**](https://github.com/kubernetes-sigs/reference-docs):
+  used in [official Kubernetes component reference docs](https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/)
+
+- [**crd-ref-docs** by Elastic](https://github.com/elastic/crd-ref-docs): A fresh implementation
+  of this project.
+
+Nowadays, I don't have a lot of time to maintain this tool. So consider
+using one of the above in case this repo does not work for you. 
+
+If you're an open source project, consider exposing your
+CRD API Reference via https://doc.crds.dev/ without much effort.
+
+
 ## Current Users
 
 - [**Knative** API reference docs](https://knative.dev/docs/reference/api/serving-api/)
