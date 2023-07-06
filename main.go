@@ -60,6 +60,9 @@ type generatorConfig struct {
 	// MarkdownDisabled controls markdown rendering for comment lines.
 	MarkdownDisabled bool `json:"markdownDisabled"`
 
+	// AsciiDoc controls HTML/text output and some comment escaping.
+	AsciiDoc bool `json:"asciiDoc"`
+
 	// GitCommitDisabled causes the git commit information to be excluded from the output.
 	GitCommitDisabled bool `json:"gitCommitDisabled"`
 }
@@ -150,9 +153,11 @@ func main() {
 			return "", errors.Wrap(err, "failed to render the result")
 		}
 
-		// remove trailing whitespace from each html line for markdown renderers
-		s := regexp.MustCompile(`(?m)^\s+`).ReplaceAllString(b.String(), "")
-		return s, nil
+		if !config.AsciiDoc {
+			// remove trailing whitespace from each html line for markdown renderers
+			return regexp.MustCompile(`(?m)^\s+`).ReplaceAllString(b.String(), ""), nil
+		}
+		return b.String(), nil
 	}
 
 	if *flOutFile != "" {
@@ -346,7 +351,7 @@ func isLocalType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) bool {
 	return ok
 }
 
-func renderComments(s []string, markdown bool) string {
+func renderComments(s []string, markdown bool, asciiDoc bool) string {
 	s = filterCommentTags(s)
 	doc := strings.Join(s, "\n")
 
@@ -355,7 +360,17 @@ func renderComments(s []string, markdown bool) string {
 		// we treat this as a HTML tag with markdown renderer below. solve this.
 		return string(blackfriday.Run([]byte(doc)))
 	}
-	return nl2br(doc)
+
+	if asciiDoc{
+		doc = strings.Replace(doc, "#", "\\#", strings.Count(doc, "#") - 1)    // avoid highlighting
+		non_attribute_re := regexp.MustCompile("{([^} ]+})")
+		doc = non_attribute_re.ReplaceAllString(doc, "\\{$1")    // avoid interpretation as attribute
+		doc = strings.ReplaceAll(doc, "|", "{vbar}") // avoid alternation interpreted as column separator
+	} else {
+		doc = nl2br(doc)
+	}
+
+	return doc
 }
 
 func safe(s string) template.HTML { return template.HTML(s) }
@@ -393,6 +408,7 @@ func apiGroupForType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) stri
 
 // anchorIDForLocalType returns the #anchor string for the local type
 func anchorIDForLocalType(t *types.Type, typePkgMap map[*types.Type]*apiPackage) string {
+	t = tryDereference(t)
 	return fmt.Sprintf("%s.%s", apiGroupForType(t, typePkgMap), t.Name.Name)
 }
 
@@ -648,26 +664,30 @@ func constantsOfType(t *types.Type, pkg *apiPackage) []*types.Type {
 	return sortTypes(constants)
 }
 
+func sanitizeId(s string) string {
+	return "_" + regexp.MustCompile("[./ -]+").ReplaceAllString(s, "_")
+}
+
 func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 	references := findTypeReferences(pkgs)
 	typePkgMap := extractTypeToPackageMap(pkgs)
 
-	t, err := template.New("").Funcs(map[string]interface{}{
+	funcMap := map[string]interface{}{
 		"isExportedType":     isExportedType,
 		"fieldName":          fieldName,
 		"fieldEmbedded":      fieldEmbedded,
 		"typeIdentifier":     func(t *types.Type) string { return typeIdentifier(t) },
 		"typeDisplayName":    func(t *types.Type) string { return typeDisplayName(t, config, typePkgMap) },
 		"visibleTypes":       func(t []*types.Type) []*types.Type { return visibleTypes(t, config) },
-		"renderComments":     func(s []string) string { return renderComments(s, !config.MarkdownDisabled) },
+		"renderComments":     func(s []string) string { return renderComments(s, !config.MarkdownDisabled, config.AsciiDoc) },
 		"packageDisplayName": func(p *apiPackage) string { return p.identifier() },
 		"apiGroup":           func(t *types.Type) string { return apiGroupForType(t, typePkgMap) },
-		"packageAnchorID": func(p *apiPackage) string {
+		"packageAnchorID":    func(p *apiPackage) string {
 			// TODO(ahmetb): currently this is the same as packageDisplayName
 			// func, and it's fine since it retuns valid DOM id strings like
 			// 'serving.knative.dev/v1alpha1' which is valid per HTML5, except
 			// spaces, so just trim those.
-			return strings.Replace(p.identifier(), " ", "", -1)
+			return strings.ReplaceAll(p.identifier(), " ", "")
 		},
 		"linkForType": func(t *types.Type) string {
 			v, err := linkForType(t, config, typePkgMap)
@@ -682,22 +702,35 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		"sortedTypes":      sortTypes,
 		"typeReferences":   func(t *types.Type) []*types.Type { return typeReferences(t, config, references) },
 		"hiddenMember":     func(m types.Member) bool { return hiddenMember(m, config) },
-		"isLocalType":      isLocalType,
+		"isLocalType":      func(t *types.Type) bool { return isLocalType(t, typePkgMap) },
 		"isOptionalMember": isOptionalMember,
 		"constantsOfType":  func(t *types.Type) []*types.Type { return constantsOfType(t, typePkgMap[t]) },
-	}).ParseGlob(filepath.Join(*flTemplateDir, "*.tpl"))
-	if err != nil {
-		return errors.Wrap(err, "parse error")
+		"sanitizeId":       sanitizeId,
+		"asciiDocAttributeEscape": func(s string) string { return strings.ReplaceAll(s, "]", "\\]") },
 	}
-
 	var gitCommit []byte
 	if !config.GitCommitDisabled {
 		gitCommit, _ = exec.Command("git", "rev-parse", "--short", "HEAD").Output()
 	}
-
-	return errors.Wrap(t.ExecuteTemplate(w, "packages", map[string]interface{}{
+	data := map[string]interface{}{
 		"packages":  pkgs,
 		"config":    config,
 		"gitCommit": strings.TrimSpace(string(gitCommit)),
-	}), "template execution error")
+	}
+
+	if config.AsciiDoc {
+		t, err := texttemplate.New("").Funcs(funcMap).ParseGlob(filepath.Join(*flTemplateDir, "*.tpl"))
+		if err != nil {
+			return errors.Wrap(err, "parse error")
+		}
+
+		return errors.Wrap(t.ExecuteTemplate(w, "packages", data), "template execution error")
+	} else {
+		t, err := template.New("").Funcs(funcMap).ParseGlob(filepath.Join(*flTemplateDir, "*.tpl"))
+		if err != nil {
+			return errors.Wrap(err, "parse error")
+		}
+
+		return errors.Wrap(t.ExecuteTemplate(w, "packages", data), "template execution error")
+	}
 }
