@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	texttemplate "text/template"
 	"time"
@@ -34,6 +35,10 @@ var (
 
 	flHTTPAddr = flag.String("http-addr", "", "start an HTTP server on specified addr to view the result (e.g. :8080)")
 	flOutFile  = flag.String("out-file", "", "path to output file to save the result")
+)
+
+const (
+	docCommentForceIncludes = "// +gencrdrefdocs:force"
 )
 
 type generatorConfig struct {
@@ -57,6 +62,9 @@ type generatorConfig struct {
 
 	// MarkdownDisabled controls markdown rendering for comment lines.
 	MarkdownDisabled bool `json:"markdownDisabled"`
+
+	// GitCommitDisabled causes the git commit information to be excluded from the output.
+	GitCommitDisabled bool `json:"gitCommitDisabled"`
 }
 
 type externalPackage struct {
@@ -69,6 +77,7 @@ type apiPackage struct {
 	apiVersion string
 	GoPackages []*types.Package
 	Types      []*types.Type // because multiple 'types.Package's can add types to an apiVersion
+	Constants  []*types.Type
 }
 
 func (v *apiPackage) identifier() string { return fmt.Sprintf("%s/%s", v.apiGroup, v.apiVersion) }
@@ -184,9 +193,9 @@ func main() {
 }
 
 // groupName extracts the "//+groupName" meta-comment from the specified
-// package's godoc, or returns empty string if it cannot be found.
+// package's comments, or returns empty string if it cannot be found.
 func groupName(pkg *types.Package) string {
-	m := types.ExtractCommentTags("+", pkg.DocComments)
+	m := types.ExtractCommentTags("+", pkg.Comments)
 	v := m["groupName"]
 	if len(v) == 1 {
 		return v[0]
@@ -237,7 +246,7 @@ func parseAPIPackages(dir string, config generatorConfig) ([]*types.Package, err
 			continue
 		}
 
-		if groupName(pkg) != "" && len(pkg.Types) > 0 {
+		if groupName(pkg) != "" && len(pkg.Types) > 0 || containsString(pkg.DocComments, docCommentForceIncludes) {
 			klog.V(3).Infof("package=%v has groupName and has types", p)
 			pkgNames = append(pkgNames, p)
 		}
@@ -251,10 +260,30 @@ func parseAPIPackages(dir string, config generatorConfig) ([]*types.Package, err
 	return pkgs, nil
 }
 
+func containsString(sl []string, str string) bool {
+	for _, s := range sl {
+		if str == s {
+			return true
+		}
+	}
+	return false
+}
+
 // combineAPIPackages groups the Go packages by the <apiGroup+apiVersion> they
 // offer, and combines the types in them.
 func combineAPIPackages(pkgs []*types.Package) ([]*apiPackage, error) {
 	pkgMap := make(map[string]*apiPackage)
+	var pkgIds []string
+
+	flattenTypes := func(typeMap map[string]*types.Type) []*types.Type {
+		typeList := make([]*types.Type, 0, len(typeMap))
+
+		for _, t := range typeMap {
+			typeList = append(typeList, t)
+		}
+
+		return typeList
+	}
 
 	for _, pkg := range pkgs {
 		apiGroup, apiVersion, err := apiVersionForPackage(pkg)
@@ -273,17 +302,23 @@ func combineAPIPackages(pkgs []*types.Package) ([]*apiPackage, error) {
 			pkgMap[id] = &apiPackage{
 				apiGroup:   apiGroup,
 				apiVersion: apiVersion,
-				Types:      typeList,
+				Types:      flattenTypes(pkg.Types),
+				Constants:  flattenTypes(pkg.Constants),
 				GoPackages: []*types.Package{pkg},
 			}
+			pkgIds = append(pkgIds, id)
 		} else {
-			v.Types = append(v.Types, typeList...)
+			v.Types = append(v.Types, flattenTypes(pkg.Types)...)
+			v.Constants = append(v.Types, flattenTypes(pkg.Constants)...)
 			v.GoPackages = append(v.GoPackages, pkg)
 		}
 	}
+
+	sort.Sort(sort.StringSlice(pkgIds))
+
 	out := make([]*apiPackage, 0, len(pkgMap))
-	for _, v := range pkgMap {
-		out = append(out, v)
+	for _, id := range pkgIds {
+		out = append(out, pkgMap[id])
 	}
 	return out, nil
 }
@@ -437,17 +472,31 @@ func linkForType(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*a
 
 // tryDereference returns the underlying type when t is a pointer, map, or slice.
 func tryDereference(t *types.Type) *types.Type {
-	if t.Elem != nil {
-		return t.Elem
+	for t.Elem != nil {
+		t = t.Elem
 	}
 	return t
 }
 
+// finalUnderlyingTypeOf walks the type hierarchy for t and returns
+// its base type (i.e. the type that has no further underlying type).
+func finalUnderlyingTypeOf(t *types.Type) *types.Type {
+	for {
+		if t.Underlying == nil {
+			return t
+		}
+
+		t = t.Underlying
+	}
+}
+
 func typeDisplayName(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*apiPackage) string {
 	s := typeIdentifier(t)
+
 	if isLocalType(t, typePkgMap) {
 		s = tryDereference(t).Name.Name
 	}
+
 	if t.Kind == types.Pointer {
 		s = strings.TrimLeft(s, "*")
 	}
@@ -463,6 +512,21 @@ func typeDisplayName(t *types.Type, c generatorConfig, typePkgMap map[*types.Typ
 	case types.Map:
 		// return original name
 		return t.Name.Name
+	case types.DeclarationOf:
+		// For constants, we want to display the value
+		// rather than the name of the constant, since the
+		// value is what users will need to write into YAML
+		// specs.
+		if t.ConstValue != nil {
+			u := finalUnderlyingTypeOf(t)
+			// Quote string constants to make it clear to the documentation reader.
+			if u.Kind == types.Builtin && u.Name.Name == "string" {
+				return strconv.Quote(*t.ConstValue)
+			}
+
+			return *t.ConstValue
+		}
+		klog.Fatalf("type %s is a non-const declaration, which is unhandled", t.Name)
 	default:
 		klog.Fatalf("type %s has kind=%v which is unhandled", t.Name, t.Kind)
 	}
@@ -517,7 +581,7 @@ func sortTypes(typs []*types.Type) []*types.Type {
 		} else if !isExportedType(t1) && isExportedType(t2) {
 			return false
 		}
-		return t1.Name.Name < t2.Name.Name
+		return t1.Name.String() < t2.Name.String()
 	})
 	return typs
 }
@@ -559,7 +623,7 @@ func isOptionalMember(m types.Member) bool {
 func apiVersionForPackage(pkg *types.Package) (string, string, error) {
 	group := groupName(pkg)
 	version := pkg.Name // assumes basename (i.e. "v1" in "core/v1") is apiVersion
-	r := `^v\d+((alpha|beta)\d+)?$`
+	r := `^v\d+((alpha|beta|api|stable)[a-z0-9]+)?$`
 	if !regexp.MustCompile(r).MatchString(version) {
 		// lets see if there's a doc comment
 		version = apiVersionComment(pkg)
@@ -578,6 +642,9 @@ func extractTypeToPackageMap(pkgs []*apiPackage) map[*types.Type]*apiPackage {
 		for _, t := range ap.Types {
 			out[t] = ap
 		}
+		for _, t := range ap.Constants {
+			out[t] = ap
+		}
 	}
 	return out
 }
@@ -591,6 +658,22 @@ func packageMapToList(pkgs map[string]*apiPackage) []*apiPackage {
 		out = append(out, v)
 	}
 	return out
+}
+
+// constantsOfType finds all the constants in pkg that have the
+// same underlying type as t. This is intended for use by enum
+// type validation, where users need to specify one of a specific
+// set of constant values for a field.
+func constantsOfType(t *types.Type, pkg *apiPackage) []*types.Type {
+	constants := []*types.Type{}
+
+	for _, c := range pkg.Constants {
+		if c.Underlying == t {
+			constants = append(constants, c)
+		}
+	}
+
+	return sortTypes(constants)
 }
 
 func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
@@ -629,12 +712,17 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		"hiddenMember":     func(m types.Member) bool { return hiddenMember(m, config) },
 		"isLocalType":      isLocalType,
 		"isOptionalMember": isOptionalMember,
+		"constantsOfType":  func(t *types.Type) []*types.Type { return constantsOfType(t, typePkgMap[t]) },
 	}).ParseGlob(filepath.Join(*flTemplateDir, "*.tpl"))
 	if err != nil {
 		return errors.Wrap(err, "parse error")
 	}
 
-	gitCommit, _ := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
+	var gitCommit []byte
+	if !config.GitCommitDisabled {
+		gitCommit, _ = exec.Command("git", "rev-parse", "--short", "HEAD").Output()
+	}
+
 	return errors.Wrap(t.ExecuteTemplate(w, "packages", map[string]interface{}{
 		"packages":  pkgs,
 		"config":    config,

@@ -2,7 +2,7 @@
 
 <h3 id="{{ anchorIDForType . }}">
     {{- .Name.Name }}
-    {{ if eq .Kind "Alias" }}(<code>{{.Underlying}}</code> alias)</p>{{ end -}}
+    {{ if eq .Kind "Alias" }}(<code>{{.Underlying}}</code> alias){{ end -}}
 </h3>
 {{ with (typeReferences .) }}
     <p>
@@ -10,17 +10,40 @@
         {{- $prev := "" -}}
         {{- range . -}}
             {{- if $prev -}}, {{ end -}}
-            {{ $prev = . }}
+            {{- $prev = . -}}
             <a href="{{ linkForType . }}">{{ typeDisplayName . }}</a>
         {{- end -}}
         )
     </p>
 {{ end }}
 
-
-<p>
+<div>
     {{ safe (renderComments .CommentLines) }}
-</p>
+</div>
+
+{{ with (constantsOfType .) }}
+<table>
+    <thead>
+        <tr>
+            <th>Value</th>
+            <th>Description</th>
+        </tr>
+    </thead>
+    <tbody>
+      {{- range . -}}
+      <tr>
+        {{- /*
+            renderComments implicitly creates a <p> element, so we
+            add one to the display name as well to make the contents
+            of the two cells align evenly.
+        */ -}}
+        <td><p>{{ typeDisplayName . }}</p></td>
+        <td>{{ safe (renderComments .CommentLines) }}</td>
+      </tr>
+      {{- end -}}
+    </tbody>
+</table>
+{{ end }}
 
 {{ if .Members }}
 <table>
@@ -34,7 +57,7 @@
         {{ if isExportedType . }}
         <tr>
             <td>
-                <code>apiVersion</code></br>
+                <code>apiVersion</code><br/>
                 string</td>
             <td>
                 <code>
@@ -44,7 +67,7 @@
         </tr>
         <tr>
             <td>
-                <code>kind</code></br>
+                <code>kind</code><br/>
                 string
             </td>
             <td><code>{{.Name.Name}}</code></td>
