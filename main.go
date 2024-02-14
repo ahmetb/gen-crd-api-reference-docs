@@ -21,11 +21,10 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/pkg/errors"
 	"github.com/russross/blackfriday/v2"
 	"k8s.io/gengo/parser"
 	"k8s.io/gengo/types"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 var (
@@ -108,9 +107,9 @@ func resolveTemplateDir(dir string) error {
 		return err
 	}
 	if fi, err := os.Stat(path); err != nil {
-		return errors.Wrapf(err, "cannot read the %s directory", path)
+		return fmt.Errorf("cannot read the %s directory: %w", path, err)
 	} else if !fi.IsDir() {
-		return errors.Errorf("%s path is not a directory", path)
+		return fmt.Errorf("%s path is not a directory", path)
 	}
 	return nil
 }
@@ -147,7 +146,7 @@ func main() {
 		var b bytes.Buffer
 		err := render(&b, apiPackages, config)
 		if err != nil {
-			return "", errors.Wrap(err, "failed to render the result")
+			return "", fmt.Errorf("failed to render the result: %w", err)
 		}
 
 		// remove trailing whitespace from each html line for markdown renderers
@@ -208,7 +207,7 @@ func parseAPIPackages(dir string) ([]*types.Package, error) {
 	}
 	scan, err := b.FindTypes()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to parse pkgs and types")
+		return nil, fmt.Errorf("failed to parse pkgs and types: %w", err)
 	}
 	var pkgNames []string
 	for p := range scan {
@@ -265,7 +264,7 @@ func combineAPIPackages(pkgs []*types.Package) ([]*apiPackage, error) {
 	for _, pkg := range pkgs {
 		apiGroup, apiVersion, err := apiVersionForPackage(pkg)
 		if err != nil {
-			return nil, errors.Wrapf(err, "could not get apiVersion for package %s", pkg.Path)
+			return nil, fmt.Errorf("could not get apiVersion for package %s: %w", pkg.Path, err)
 		}
 
 		typeList := make([]*types.Type, 0, len(pkg.Types))
@@ -419,7 +418,7 @@ func linkForType(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*a
 		for _, v := range c.ExternalPackages {
 			r, err := regexp.Compile(v.TypeMatchPrefix)
 			if err != nil {
-				return "", errors.Wrapf(err, "pattern %q failed to compile", v.TypeMatchPrefix)
+				return "", fmt.Errorf("pattern %q failed to compile: %w", v.TypeMatchPrefix, err)
 			}
 			if r.MatchString(id) {
 				tpl, err := texttemplate.New("").Funcs(map[string]interface{}{
@@ -427,7 +426,7 @@ func linkForType(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*a
 					"arrIndex": arrIndex,
 				}).Parse(v.DocsURLTemplate)
 				if err != nil {
-					return "", errors.Wrap(err, "docs URL template failed to parse")
+					return "", fmt.Errorf("docs URL template failed to parse: %w", err)
 				}
 
 				var b bytes.Buffer
@@ -437,7 +436,7 @@ func linkForType(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*a
 						"PackagePath":     t.Name.Package,
 						"PackageSegments": segments,
 					}); err != nil {
-					return "", errors.Wrap(err, "docs url template execution error")
+					return "", fmt.Errorf("docs url template execution error: %w", err)
 				}
 				return b.String(), nil
 			}
@@ -602,7 +601,7 @@ func apiVersionForPackage(pkg *types.Package) (string, string, error) {
 	version := pkg.Name // assumes basename (i.e. "v1" in "core/v1") is apiVersion
 	r := `^v\d+((alpha|beta|api|stable)[a-z0-9]+)?$`
 	if !regexp.MustCompile(r).MatchString(version) {
-		return "", "", errors.Errorf("cannot infer kubernetes apiVersion of go package %s (basename %q doesn't match expected pattern %s that's used to determine apiVersion)", pkg.Path, version, r)
+		return "", "", fmt.Errorf("cannot infer kubernetes apiVersion of go package %s (basename %q doesn't match expected pattern %s that's used to determine apiVersion)", pkg.Path, version, r)
 	}
 	return group, version, nil
 }
@@ -672,7 +671,7 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		"linkForType": func(t *types.Type) string {
 			v, err := linkForType(t, config, typePkgMap)
 			if err != nil {
-				klog.Fatal(errors.Wrapf(err, "error getting link for type=%s", t.Name))
+				klog.Fatal(fmt.Errorf("error getting link for type=%s: %w", t.Name, err))
 				return ""
 			}
 			return v
@@ -687,7 +686,7 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		"constantsOfType":  func(t *types.Type) []*types.Type { return constantsOfType(t, typePkgMap[t]) },
 	}).ParseGlob(filepath.Join(*flTemplateDir, "*.tpl"))
 	if err != nil {
-		return errors.Wrap(err, "parse error")
+		return fmt.Errorf("parse error: %w", err)
 	}
 
 	var gitCommit []byte
@@ -695,9 +694,13 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		gitCommit, _ = exec.Command("git", "rev-parse", "--short", "HEAD").Output()
 	}
 
-	return errors.Wrap(t.ExecuteTemplate(w, "packages", map[string]interface{}{
+	if err := t.ExecuteTemplate(w, "packages", map[string]interface{}{
 		"packages":  pkgs,
 		"config":    config,
 		"gitCommit": strings.TrimSpace(string(gitCommit)),
-	}), "template execution error")
+	}); err != nil {
+		return fmt.Errorf("template execution error: %w", err)
+	}
+
+	return nil
 }
