@@ -1,10 +1,11 @@
 module github.com/ahmetb/gen-crd-api-reference-docs
 
-go 1.15
+go 1.21.0
 
 require (
-	github.com/go-logr/logr v1.2.4 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0
-	k8s.io/gengo v0.0.0-20230306165830-ab3349d207d4
-	k8s.io/klog/v2 v2.90.1
+	k8s.io/gengo v0.0.0-20240404160639-a0386bf69313
+	k8s.io/klog/v2 v2.120.1
 )
+
+require github.com/go-logr/logr v1.4.1 // indirect
