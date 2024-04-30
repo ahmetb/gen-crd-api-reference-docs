@@ -46,3 +46,7 @@ jobs:
           args: ${{ github.ref_type == 'tag' && 'release' || 'build --snapshot' }} --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Print version
+        run: ./dist/gen-crd-api-reference-docs_linux_amd64_v1/gen-crd-api-reference-docs -version
+        continue-on-error: true
