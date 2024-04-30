@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
@@ -98,7 +97,6 @@ func init() {
 	if err := resolveTemplateDir(*flTemplateDir); err != nil {
 		panic(err)
 	}
-
 }
 
 func resolveTemplateDir(dir string) error {
@@ -156,14 +154,14 @@ func main() {
 
 	if *flOutFile != "" {
 		dir := filepath.Dir(*flOutFile)
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
 			klog.Fatalf("failed to create dir %s: %v", dir, err)
 		}
 		s, err := mkOutput()
 		if err != nil {
 			klog.Fatalf("failed: %+v", err)
 		}
-		if err := ioutil.WriteFile(*flOutFile, []byte(s), 0644); err != nil {
+		if err := os.WriteFile(*flOutFile, []byte(s), 0o644); err != nil {
 			klog.Fatalf("failed to write to out file: %v", err)
 		}
 		klog.Infof("written to %s", *flOutFile)
@@ -404,7 +402,7 @@ func linkForType(t *types.Type, c generatorConfig, typePkgMap map[*types.Type]*a
 		return "#" + anchorIDForLocalType(t, typePkgMap), nil
 	}
 
-	var arrIndex = func(a []string, i int) string {
+	arrIndex := func(a []string, i int) string {
 		return a[(len(a)+i)%len(a)]
 	}
 
@@ -663,7 +661,7 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 		"apiGroup":           func(t *types.Type) string { return apiGroupForType(t, typePkgMap) },
 		"packageAnchorID": func(p *apiPackage) string {
 			// TODO(ahmetb): currently this is the same as packageDisplayName
-			// func, and it's fine since it retuns valid DOM id strings like
+			// func, and it's fine since it returns valid DOM id strings like
 			// 'serving.knative.dev/v1alpha1' which is valid per HTML5, except
 			// spaces, so just trim those.
 			return strings.Replace(p.identifier(), " ", "", -1)
