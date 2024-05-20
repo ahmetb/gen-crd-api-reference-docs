@@ -32,7 +32,7 @@ jobs:
           go-version: stable
 
       - name: Download Syft
-        uses: anchore/sbom-action/download-syft@v0.15.11
+        uses: anchore/sbom-action/download-syft@v0.16.0
         if: github.ref_type == 'tag'
 
       - name: Install Cosign
