@@ -38,6 +38,7 @@ CRD API Reference via https://doc.crds.dev/ without much effort.
 - [**Antrea** API reference docs](https://antrea.io/docs/v1.3.0/docs/api-reference/)
 - [**kube-green** API reference docs](https://kube-green.dev/docs/apireference_v1alpha1/)
 - [**Azure Service Operator** supported resources](https://azure.github.io/azure-service-operator/reference/)
+- [**NGINX Gateway Fabric** API reference docs](https://docs.nginx.com/nginx-gateway-fabric/reference/api/)
 - _[[ADD YOUR PROJECT HERE]]_
 
 Also some **forks**:
