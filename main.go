@@ -21,8 +21,9 @@ import (
 	"unicode"
 
 	"github.com/russross/blackfriday/v2"
-	"k8s.io/gengo/parser"
-	"k8s.io/gengo/types"
+	"k8s.io/gengo/v2"
+	"k8s.io/gengo/v2/parser"
+	"k8s.io/gengo/v2/types"
 	"k8s.io/klog/v2"
 )
 
@@ -189,7 +190,7 @@ func main() {
 // groupName extracts the "//+groupName" meta-comment from the specified
 // package's comments, or returns empty string if it cannot be found.
 func groupName(pkg *types.Package) string {
-	m := types.ExtractCommentTags("+", pkg.Comments)
+	m := gengo.ExtractCommentTags("+", pkg.Comments)
 	v := m["groupName"]
 	if len(v) == 1 {
 		return v[0]
@@ -198,38 +199,42 @@ func groupName(pkg *types.Package) string {
 }
 
 func parseAPIPackages(dir string) ([]*types.Package, error) {
-	b := parser.New()
-	// the following will silently fail (turn on -v=4 to see logs)
-	if err := b.AddDirRecursive(*flAPIDir); err != nil {
-		return nil, err
+	p := parser.New()
+
+	pkgsFound, errFind := p.FindPackages(dir + "/...")
+	if errFind != nil {
+		return nil, fmt.Errorf("failed to find packages in %s: %w", dir, errFind)
 	}
-	scan, err := b.FindTypes()
+	klog.Infof("found %d packages", len(pkgsFound))
+
+	errLoad := p.LoadPackages(pkgsFound...)
+	if errLoad != nil {
+		return nil, fmt.Errorf("failed to load packages: %w", errLoad)
+	}
+
+	scan, err := p.NewUniverse()
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse pkgs and types: %w", err)
 	}
-	var pkgNames []string
-	for p := range scan {
-		pkg := scan[p]
+
+	var pkgs []*types.Package
+	for _, pkg := range scan {
+
 		klog.V(3).Infof("trying package=%v groupName=%s", p, groupName(pkg))
 
 		// Do not pick up packages that are in vendor/ as API packages. (This
 		// happened in knative/eventing-sources/vendor/..., where a package
 		// matched the pattern, but it didn't have a compatible import path).
 		if isVendorPackage(pkg) {
-			klog.V(3).Infof("package=%v coming from vendor/, ignoring.", p)
+			klog.V(3).Infof("package=%v coming from vendor/, ignoring.", pkg.Name)
 			continue
 		}
 
 		if groupName(pkg) != "" && len(pkg.Types) > 0 || containsString(pkg.DocComments, docCommentForceIncludes) {
-			klog.V(3).Infof("package=%v has groupName and has types", p)
-			pkgNames = append(pkgNames, p)
+			klog.V(3).Infof("package=%v has groupName and has types", pkg.Name)
+			klog.Info("using package=", pkg.Name)
+			pkgs = append(pkgs, pkg)
 		}
-	}
-	sort.Strings(pkgNames)
-	var pkgs []*types.Package
-	for _, p := range pkgNames {
-		klog.Infof("using package=%s", p)
-		pkgs = append(pkgs, scan[p])
 	}
 	return pkgs, nil
 }
@@ -300,7 +305,7 @@ func combineAPIPackages(pkgs []*types.Package) ([]*apiPackage, error) {
 // isVendorPackage determines if package is coming from vendor/ dir.
 func isVendorPackage(pkg *types.Package) bool {
 	vendorPattern := string(os.PathSeparator) + "vendor" + string(os.PathSeparator)
-	return strings.Contains(pkg.SourcePath, vendorPattern)
+	return strings.Contains(pkg.Dir, vendorPattern)
 }
 
 func findTypeReferences(pkgs []*apiPackage) map[*types.Type][]*types.Type {
@@ -589,7 +594,7 @@ func filterCommentTags(comments []string) []string {
 }
 
 func isOptionalMember(m types.Member) bool {
-	tags := types.ExtractCommentTags("+", m.CommentLines)
+	tags := gengo.ExtractCommentTags("+", m.CommentLines)
 	_, ok := tags["optional"]
 	return ok
 }
