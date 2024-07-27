@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,9 +33,13 @@ var (
 	flConfig      = flag.String("config", "", "path to config file")
 	flAPIDir      = flag.String("api-dir", "", "api directory (or import path), point this to pkg/apis")
 	flTemplateDir = flag.String("template-dir", "template", "path to template/ dir")
+	flVersion     = flag.Bool("version", false, "print version and exit")
 
 	flHTTPAddr = flag.String("http-addr", "", "start an HTTP server on specified addr to view the result (e.g. :8080)")
 	flOutFile  = flag.String("out-file", "", "path to output file to save the result")
+
+	// set by go build
+	version string
 )
 
 const (
@@ -82,6 +88,14 @@ func init() {
 	klog.InitFlags(nil)
 	flag.Set("alsologtostderr", "true") // for klog
 	flag.Parse()
+
+	commitHash, commitTime, dirtyBuild := getBuildInfo()
+	arch := fmt.Sprintf("%v/%v", runtime.GOOS, runtime.GOARCH)
+
+	if *flVersion {
+		fmt.Printf("gen-crd-api-reference-docs version=%s commit=%s date=%s dirty=%v arch=%s go=%v\n", version, commitHash, commitTime, dirtyBuild, arch, runtime.Version())
+		os.Exit(0)
+	}
 
 	if *flConfig == "" {
 		panic("-config not specified")
@@ -706,4 +720,24 @@ func render(w io.Writer, pkgs []*apiPackage, config generatorConfig) error {
 	}
 
 	return nil
+}
+
+func getBuildInfo() (string, string, bool) {
+	var commitHash, commitTime string
+	var dirtyBuild bool
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "", "", false
+	}
+	for _, kv := range info.Settings {
+		switch kv.Key {
+		case "vcs.revision":
+			commitHash = kv.Value
+		case "vcs.time":
+			commitTime = kv.Value
+		case "vcs.modified":
+			dirtyBuild = kv.Value == "true"
+		}
+	}
+	return commitHash, commitTime, dirtyBuild
 }
