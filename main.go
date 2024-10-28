@@ -490,21 +490,28 @@ func typeDisplayName(t *types.Type, c generatorConfig, typePkgMap map[*types.Typ
 		s = tryDereference(t).Name.Name
 	}
 
-	if t.Kind == types.Pointer {
-		s = strings.TrimLeft(s, "*")
-	}
-
 	switch t.Kind {
 	case types.Struct,
 		types.Interface,
 		types.Alias,
-		types.Pointer,
-		types.Slice,
 		types.Builtin:
 		// noop
+
+	case types.Pointer:
+		// Use the display name of the element of the pointer as the display name of the pointer.
+		return typeDisplayName(t.Elem, c, typePkgMap)
+
+	case types.Slice:
+		// Use the display name of the element of the slice to build the display name of the slice.
+		elemName := typeDisplayName(t.Elem, c, typePkgMap)
+		return fmt.Sprintf("[]%s", elemName)
+
 	case types.Map:
-		// return original name
-		return t.Name.Name
+		// Use the display names of the key and element types of the map to build the display name of the map.
+		keyName := typeDisplayName(t.Key, c, typePkgMap)
+		elemName := typeDisplayName(t.Elem, c, typePkgMap)
+		return fmt.Sprintf("map[%s]%s", keyName, elemName)
+
 	case types.DeclarationOf:
 		// For constants, we want to display the value
 		// rather than the name of the constant, since the
@@ -519,7 +526,9 @@ func typeDisplayName(t *types.Type, c generatorConfig, typePkgMap map[*types.Typ
 
 			return *t.ConstValue
 		}
+
 		klog.Fatalf("type %s is a non-const declaration, which is unhandled", t.Name)
+
 	default:
 		klog.Fatalf("type %s has kind=%v which is unhandled", t.Name, t.Kind)
 	}
@@ -529,10 +538,6 @@ func typeDisplayName(t *types.Type, c generatorConfig, typePkgMap map[*types.Typ
 		if strings.HasPrefix(s, prefix) {
 			s = strings.Replace(s, prefix, replacement, 1)
 		}
-	}
-
-	if t.Kind == types.Slice {
-		s = "[]" + s
 	}
 
 	return s
