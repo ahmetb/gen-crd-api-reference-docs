@@ -40,7 +40,7 @@ jobs:
         if: github.ref_type == 'tag'
 
       - name: Build binary
-        uses: goreleaser/goreleaser-action@v6.0.0
+        uses: goreleaser/goreleaser-action@v6.2.1
         with:
           version: latest
           args: ${{ github.ref_type == 'tag' && 'release' || 'build --snapshot' }} --clean
