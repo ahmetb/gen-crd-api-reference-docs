@@ -5,6 +5,12 @@ API Reference Docs [like this][ar] this tool is for you.
 
 [ar]: https://knative.dev/docs/reference/api/serving-api/
 
+
+> [!WARNING]
+> **This project is not super actively maintained.**
+> Consider using the [**crd-ref-docs** by Elastic](https://github.com/elastic/crd-ref-docs) project
+  instead.
+
 ## Alternatives
 
 This project has inspired creation of the following projects:
@@ -15,11 +21,11 @@ This project has inspired creation of the following projects:
 - [**crd-ref-docs** by Elastic](https://github.com/elastic/crd-ref-docs): A fresh implementation
   of this project.
 
-Nowadays, I don't have a lot of time to maintain this tool. So consider
-using one of the above in case this repo does not work for you. 
+- If you're an open source project, consider exposing your
+  CRD API Reference via https://doc.crds.dev/ without much effort.
 
-If you're an open source project, consider exposing your
-CRD API Reference via https://doc.crds.dev/ without much effort.
+
+
 
 
 ## Current Users
