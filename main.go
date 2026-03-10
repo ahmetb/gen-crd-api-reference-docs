@@ -344,8 +344,11 @@ func isExportedType(t *types.Type) bool {
 
 func fieldName(m types.Member) string {
 	v := reflect.StructTag(m.Tags).Get("json")
-	v = strings.TrimSuffix(v, ",omitempty")
-	v = strings.TrimSuffix(v, ",inline")
+	// Extract only the field name from the json tag, stripping all options
+	// (e.g. omitempty, omitzero, inline, string).
+	if i := strings.Index(v, ","); i != -1 {
+		v = v[:i]
+	}
 	if v != "" {
 		return v
 	}
