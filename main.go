@@ -87,6 +87,10 @@ func (v *apiPackage) identifier() string { return fmt.Sprintf("%s/%s", v.apiGrou
 func init() {
 	klog.InitFlags(nil)
 	flag.Set("alsologtostderr", "true") // for klog
+	// Opt into the new klog behavior so that -stderrthreshold is honored even
+	// when -logtostderr=true (the default).
+	// Ref: kubernetes/klog#212, kubernetes/klog#432
+	flag.Set("legacy_stderr_threshold_behavior", "false")
 	flag.Parse()
 
 	commitHash, commitTime, dirtyBuild := getBuildInfo()
