@@ -1,6 +1,6 @@
 module github.com/ahmetb/gen-crd-api-reference-docs
 
-go 1.21.0
+go 1.25.0
 
 require (
 	github.com/russross/blackfriday/v2 v2.1.0
@@ -10,6 +10,7 @@ require (
 
 require (
 	github.com/go-logr/logr v1.4.1 // indirect
-	golang.org/x/mod v0.14.0 // indirect
-	golang.org/x/tools v0.16.1 // indirect
+	golang.org/x/mod v0.36.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/tools v0.45.0 // indirect
 )
